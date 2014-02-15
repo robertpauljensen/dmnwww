@@ -20,7 +20,7 @@ backend www1 {
     .threshold = 6;
     .initial = 6;
   }
-  .max_connections = 64;
+  .max_connections = 128;
 }
 
 backend www2 {
@@ -33,7 +33,7 @@ backend www2 {
     .threshold = 6;
     .initial = 6;
   }
-  .max_connections = 64;
+  .max_connections = 128;
 }
 
 director www round-robin {
