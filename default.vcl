@@ -206,6 +206,13 @@ sub vcl_fetch {
   #}
   #set beresp.grace = 30m;
 
+  if (beresp.status == 403 || beresp.status == 404) {
+    if (req.restarts == 0) {
+      set beresp.saintmode = 10s;
+      return(restart);
+    }
+  }
+  
   #set beresp.http.X-FrontDoor = "NO";
   
   # Sub Mast can change pretty often...
