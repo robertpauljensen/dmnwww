@@ -206,10 +206,14 @@ sub vcl_fetch {
   #}
   #set beresp.grace = 30m;
 
+  # Only retry static files, as 403 can cause us issues with things like
+  # the rate limiter on comments (throws a 403 if you comment too fast)
   if (beresp.status == 403 || beresp.status == 404) {
-    if (req.restarts == 0) {
-      set beresp.saintmode = 10s;
-      return(restart);
+    if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
+      if (req.restarts == 0) {
+        set beresp.saintmode = 10s;
+        return(restart);
+      }
     }
   }
   
