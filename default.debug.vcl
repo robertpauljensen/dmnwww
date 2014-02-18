@@ -36,7 +36,7 @@ backend upload1 {
   .host = "10.30.1.110";
   .port = "10081";
   .probe = {
-    .url = "/robots.txt";
+    .url = "/ping";
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
@@ -47,9 +47,9 @@ backend upload1 {
 
 backend upload2 {
   .host = "10.30.1.111";
-  .port = "10080";
+  .port = "10081";
   .probe = {
-    .url = "/robots.txt";
+    .url = "/ping";
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
@@ -58,11 +58,6 @@ backend upload2 {
   .max_connections = 128;
 }
 
-backend static {
-  .host = "72.52.81.235";
-  .port = "8080";
-  .max_connections = 8;
-}
 
 director www round-robin {
   { .backend = www1; }
@@ -120,7 +115,7 @@ sub vcl_recv {
   ## Force TTL/Caching ?  
 
 
-  ##req.http.X-DMN-Debug == 'Please';
+  set req.http.X-DMN-Debug = "Please";
   call preserveOrigHeaders;
   
 
@@ -139,7 +134,7 @@ sub vcl_recv {
     }
     ban("obj.http.x-url ~ " + req.http.x-ban-url + 
       " && obj.http.x-host ~ " + req.http.x-ban-host);
-    error 200 "Banned From Cache"
+    error 200 "Banned From Cache";
   }
 		       
   ## TODO: add url parm to force refresh ?? 
@@ -192,16 +187,15 @@ sub vcl_recv {
     set req.http.X-Forwarded-For = client.ip;
   }
 
-
   ## Normalize Encoding
   ## Not sure this is needed for modern browsers ?
   if (req.http.X-DMN-Debug) {
-    req.http.X-DMN-Debug-Encoding-Changed = "No";
+    set req.http.X-DMN-Debug-Encoding-Changed = "No";
   }
   
   if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
     if (req.http.X-DMN-Debug) {
-      req.http.X-DMN-Debug-Encoding-Changed = 
+      set req.http.X-DMN-Debug-Encoding-Changed = 
         "YES - REMOVED from compressed Media File";
     }  
     # Already Compressed
@@ -211,20 +205,20 @@ sub vcl_recv {
   if (req.http.Accept-Encoding) {
     if (req.http.Accept-Encoding ~ "gzip") {
       if (req.http.X-DMN-Debug) {
-        req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized GZIP";
+        set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized GZIP";
       }  
       set req.http.Accept-Encoding = "gzip";
     }
     else if (req.http.Accept-Encoding ~ "deflate") {
       if (req.http.X-DMN-Debug) {
-        req.http.X-DMN-Debug-Encoding-Changed = 
+        set req.http.X-DMN-Debug-Encoding-Changed = 
 	   "YES - Normalized DEFLATE";
       }  
       set req.http.Accept-Encoding = "deflate";
     }
     else {
       if (req.http.X-DMN-Debug) {
-        req.http.X-DMN-Debug-Encoding-Changed = 
+        set req.http.X-DMN-Debug-Encoding-Changed = 
 	   "YES - Removed UNKNOWN: " + req.http.Accept-Encoding;
       }  
       # unknown algorithm
@@ -265,14 +259,15 @@ sub vcl_recv {
 
 
   ## Strip Cookies if possible
+
   
   ## Simple static files
   if (req.http.X-DMN-Debug) {
-    req.http.X-DMN-Debug-Cookies-Unset = "No";
+    set req.http.X-DMN-Debug-Cookies-Unset = "No";
   }
   if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
     if (req.http.X-DMN-Debug) {
-      req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
+      set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
     }  
     unset req.http.Cookie;
   }
@@ -282,29 +277,33 @@ sub vcl_recv {
   #if (req.url ~ "\.(css|js|txt|rss|atom)$") {
   if (req.url ~ "\.(css|js|txt)$") {
     if (req.http.X-DMN-Debug) {
-      req.http.X-DMN-Debug-Cookies-Unset = "YES - css/js File";
+      set req.http.X-DMN-Debug-Cookies-Unset = "YES - css/js File";
     }  
     unset req.http.Cookie;
   }
   # Keep the version so we correctly catch updates, but drop cookies
   if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
     if (req.http.X-DMN-Debug) {
-      req.http.X-DMN-Debug-Cookies-Unset = "YES - VERSIONED css/js File";
+      set req.http.X-DMN-Debug-Cookies-Unset = "YES - VERSIONED css/js File";
     }  
     unset req.http.Cookie;
   }
 
 
+
   ## Setup the backend...
   if (req.url ~ "^/wp-content/uploads" && req.request == "GET" ) {
-    set req.http.X-DMN-Debug-Director = "uploads (strips cookies)";
-    set req.backend = uploads;  
     unset req.http.Cookie;
+    set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
+    set req.http.X-DMN-Debug-Director = 
+      "uploads (strips cookies): " + req.url;
+    set req.backend = uploads;  
   } else {
     set req.http.X-DMN-Debug-Director = "www";
     set req.backend = www;
   }
-  
+
+
   # SAH Serve objects up to 20 minutes past their expiry if the backend
   #     is slow to respond.
   if (! req.backend.healthy) {
@@ -368,13 +367,23 @@ sub vcl_recv {
 		      
 
 sub vcl_fetch {
+  ## Debug Support
   ## Retry Support
   ## BAN support
   ## Unset cookies if possible
   ## Set TTL if needed
   ## Set Grace Time
 
-
+  if (req.http.X-DMN-Debug) {
+    set beresp.http.X-DMN-Debug = req.http.X-DMN-Debug ;
+    set beresp.http.X-Forwarded-For = req.http.X-Forwarded-For ;
+    set beresp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
+    set beresp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
+    set beresp.http.X-DMN-Debug-Director = req.http.X-DMN-Debug-Director ;
+    set beresp.http.X-DMN-Debug-Grace = req.http.X-DMN-Debug-Grace ;
+  }
+  
+  
   ## Retry Support
   ## retry 404's on images as they might not have synced yet..
   ## be careful if you retry 403's as it can cause us issues with things like
@@ -392,9 +401,8 @@ sub vcl_fetch {
   #  set beresp.saintmode = 20s;
   #  return(restart);
   #}
-  #set beresp.grace = 30m;
 
-  
+
   
   ## BAN Lurker support
   set beresp.http.x-url  = req.url;
@@ -446,10 +454,16 @@ sub vcl_fetch {
     return(hit_for_pass);
   }
 
+
   # Varnish determined the object was not cacheable
   if ( beresp.ttl <= 0s ) {
     set beresp.http.X-Cacheable = "NO: Not Cacheable (Unknown Reason)";
   }
+
+
+  ## Setup the grace Time
+  set beresp.grace = 30m;
+
 
 
 
@@ -545,8 +559,6 @@ sub vcl_hit {
     error 200 "Purged.";
   }
   
-  
-  
 }
 
 
@@ -567,7 +579,16 @@ sub vcl_miss {
 
 
 
+sub vcl_deliver {
 
+  if (obj.hits > 0) {
+    set resp.http.X-Cache = "HIT";
+  } else {
+    set resp.http.X-Cache = "MISS";
+  }
+  
+  #remove resp.http.X-Varnish;
+}
 
 
 
