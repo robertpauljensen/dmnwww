@@ -1,1 +1,1 @@
-prod.vcl
+debug.vcl

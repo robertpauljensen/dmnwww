@@ -98,10 +98,6 @@ sub preserveOrigHeaders {
 }
 
 
-
-
-
-
 sub vcl_recv {
   ## Turn on Debug (if desired)
   ## Preserve the origin headers (if desired)
@@ -367,35 +363,26 @@ sub vcl_recv {
 		      
 
 sub vcl_fetch {
-  ## Debug Support
   ## Retry Support
   ## BAN support
   ## Unset cookies if possible
   ## Set TTL if needed
   ## Set Grace Time
 
-  if (req.http.X-DMN-Debug) {
-    set beresp.http.X-DMN-Debug = req.http.X-DMN-Debug ;
-    set beresp.http.X-Forwarded-For = req.http.X-Forwarded-For ;
-    set beresp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
-    set beresp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
-    set beresp.http.X-DMN-Debug-Director = req.http.X-DMN-Debug-Director ;
-    set beresp.http.X-DMN-Debug-Grace = req.http.X-DMN-Debug-Grace ;
-  }
-  
+
   
   ## Retry Support
   ## retry 404's on images as they might not have synced yet..
   ## be careful if you retry 403's as it can cause us issues with things like
   ## the rate limiter on comments (throws a 403 if you comment too fast)
-  if (beresp.status == 404) {
-    if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
-      if (req.restarts == 0) {
-        set beresp.saintmode = 3s;
-        return(restart);
-      }
-    }
-  }
+  #if (beresp.status == 404) {
+  #  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
+  #    if (req.restarts == 0) {
+  #      set beresp.saintmode = 3s;
+  #      return(restart);
+  #    }
+  #  }
+  #}
   
   #if (beresp.status == 502 || beresp.status == 503) {
   #  set beresp.saintmode = 20s;
@@ -418,7 +405,13 @@ sub vcl_fetch {
     return (hit_for_pass); 
   }
  
-  # Honour Private Cache Controls
+  # Honour Cache Controls
+  if ( beresp.http.Cache-Control ~ "no-cache" ) {
+    set beresp.ttl = 0s;
+    set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
+    return(hit_for_pass);
+  }
+
   if ( beresp.http.Cache-Control ~ "private" ) {
     set beresp.ttl = 0s;
     set beresp.http.X-Cacheable = "NO:Cache-Control=private";
@@ -540,19 +533,6 @@ sub vcl_fetch {
 
 
 
-
-sub vcl_deliver {
-  ## BAN Lurker Support
-  unset resp.http.x-url;
-  unset resp.http.x-host;
-  
-  
-}
-
-
-
-
-
 sub vcl_hit {
   if (req.request == "PURGE") {
     purge;
@@ -579,19 +559,59 @@ sub vcl_miss {
 
 
 
-sub vcl_deliver {
-
-  if (obj.hits > 0) {
-    set resp.http.X-Cache = "HIT";
-  } else {
-    set resp.http.X-Cache = "MISS";
-  }
-  
-  #remove resp.http.X-Varnish;
+sub vcl_pass {
+  set req.http.X-PASSED = "Yep";
 }
 
 
 
+
+
+sub vcl_deliver {
+
+
+  if (req.http.X-DMN-Debug) {
+    set resp.http.X-DMN-Debug = req.http.X-DMN-Debug ;
+    set resp.http.X-Forwarded-For = req.http.X-Forwarded-For ;
+    set resp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
+    set resp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
+    set resp.http.X-DMN-Debug-Director = req.http.X-DMN-Debug-Director ;
+    set resp.http.X-DMN-Debug-Grace = req.http.X-DMN-Debug-Grace ;
+  }
+
+  if (req.http.X-DMN-Debug) {
+    if (req.http.X-Debug-Orig-Request) {
+      set resp.http.X-Debug-Orig-Request = req.http.X-Debug-Orig-Request ;
+      set resp.http.X-Debug-Orig-Host = req.http.X-Debug-Orig-Host ; 
+      set resp.http.X-Debug-Orig-Port = req.http.X-Debug-Orig-Port ;
+      set resp.http.X-Debug-Orig-Url  = req.http.X-Debug-Orig-Url  ;
+      set resp.http.X-Debug-Orig-Client  = req.http.X-Debug-Orig-Client  ;
+      set resp.http.X-Debug-Orig-Accept-Encoding = req.http.X-Debug-Orig-Accept-Encoding ;
+      set resp.http.X-Debug-Orig-Forwarded-For = req.http.X-Debug-Orig-Forwarded-For ;
+    }
+  }
+
+
+  if (req.http.X-PASSED) {
+    set resp.http.X-PASSED = "Yep";
+  } else {
+    set resp.http.X-PASSED = "Nope";
+  }
+  
+  
+  if (obj.hits == 0) {
+    set resp.http.X-Cache = "MISS";
+  } else {
+    set resp.http.X-Cache = "HIT (" + obj.hits + " Times)";
+  }
+  
+
+  ## BAN Lurker Support
+  unset resp.http.x-url;
+  unset resp.http.x-host;
+  
+  #remove resp.http.X-Varnish;
+}
 
 
 sub vcl_pipe {
