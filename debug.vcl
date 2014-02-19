@@ -401,20 +401,26 @@ sub vcl_fetch {
   # folder. (Safety feature)
   if (req.url ~ "^/transaction" ) {
     set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO: Transaction Folder";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "NO: Transaction Folder";
+    }  
     return (hit_for_pass); 
   }
  
   # Honour Cache Controls
   if ( beresp.http.Cache-Control ~ "no-cache" ) {
     set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
+    }  
     return(hit_for_pass);
   }
 
   if ( beresp.http.Cache-Control ~ "private" ) {
     set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO:Cache-Control=private";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "NO:Cache-Control=private";
+    }  
     return(hit_for_pass);
   }
 
@@ -427,7 +433,9 @@ sub vcl_fetch {
     unset beresp.http.set-cookie;
     set beresp.ttl = 60s;
     set beresp.http.Cache-Control = "max-age=60";
-    set beresp.http.X-Cacheable = "YES:Forced Image File: " + beresp.ttl;
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "YES:Forced Image File: " + beresp.ttl;
+    }  
   }
       
   # Strip cookies for static files:
@@ -435,7 +443,18 @@ sub vcl_fetch {
     unset beresp.http.set-cookie;
     set beresp.ttl = 3600s;
     set beresp.http.Cache-Control = "max-age=3600";
-    set beresp.http.X-Cacheable = "YES:Forced Static File: " + beresp.ttl;
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "YES:Forced Static File: " + beresp.ttl;
+    }  
+  }
+
+  if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
+    unset beresp.http.set-cookie;
+    set beresp.ttl = 3600s;
+    set beresp.http.Cache-Control = "max-age=3600";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
+    }  
   }
 
   
@@ -443,14 +462,18 @@ sub vcl_fetch {
   # Only cache responses with no cookies
   if (beresp.http.set-cookie) {
     set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO: SET COOKIE";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "NO: SET COOKIE";
+    }  
     return(hit_for_pass);
   }
 
 
   # Varnish determined the object was not cacheable
   if ( beresp.ttl <= 0s ) {
-    set beresp.http.X-Cacheable = "NO: Not Cacheable (Unknown Reason)";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "NO: Not Cacheable (Unknown Reason)";
+    }  
   }
 
 
