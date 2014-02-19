@@ -375,14 +375,14 @@ sub vcl_fetch {
   ## retry 404's on images as they might not have synced yet..
   ## be careful if you retry 403's as it can cause us issues with things like
   ## the rate limiter on comments (throws a 403 if you comment too fast)
-  #if (beresp.status == 404) {
-  #  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
-  #    if (req.restarts == 0) {
-  #      set beresp.saintmode = 3s;
-  #      return(restart);
-  #    }
-  #  }
-  #}
+  if (beresp.status == 404) {
+    if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
+      if (req.restarts == 0) {
+        set beresp.saintmode = 3s;
+        return(restart);
+      }
+    }
+  }
   
   #if (beresp.status == 502 || beresp.status == 503) {
   #  set beresp.saintmode = 20s;
@@ -431,8 +431,8 @@ sub vcl_fetch {
   # Strip cookies for image files:
   if (req.url ~ "\.(bmp|ico|jpe?g|gif|png)$") {
     unset beresp.http.set-cookie;
-    set beresp.ttl = 60s;
-    set beresp.http.Cache-Control = "max-age=60";
+    set beresp.ttl = 90s;
+    set beresp.http.Cache-Control = "max-age=90";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced Image File: " + beresp.ttl;
     }  
