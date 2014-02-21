@@ -153,6 +153,7 @@ sub vcl_recv {
     
   if (req.request != "GET" && req.request != "HEAD") {
     /* We only deal with GET and HEAD by default */
+    set req.backend = www;
     return (pass);
   }
 
@@ -406,6 +407,11 @@ sub vcl_fetch {
   }
   
   
+  if (beresp.status == 502 || beresp.status == 503) {
+    set beresp.ttl = 0s;
+    set beresp.grace = 0s;
+    return (hit_for_pass); 
+  }
   #if (beresp.status == 502 || beresp.status == 503) {
   #  set beresp.saintmode = 20s;
   #  return(restart);
