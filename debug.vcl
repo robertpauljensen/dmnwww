@@ -288,14 +288,21 @@ sub vcl_recv {
 
 
   ## Setup the backend...
-  if (req.url ~ "^/wp-content/uploads" && req.request == "GET" ) {
+  ## WARNING!
+  ##   if you restart a request, it will use the MODIFIED req object
+  ##   This means, for instance, if you changed the req.url -
+  ##   you may get a DIFFERENT director on restart!!
+  ## WARNING!
+  if (req.http.X-DMN-Use-Uploads || 
+       (req.url ~ "^/wp-content/uploads" && req.request == "GET" )) {
     unset req.http.Cookie;
     set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
-    set req.http.X-DMN-Debug-Director = 
+    set req.http.X-DMN-Debug-Backend-Director = 
       "uploads (strips cookies): " + req.url;
+    set req.http.X-DMN-Use-Uploads = "Yes";  
     set req.backend = uploads;  
   } else {
-    set req.http.X-DMN-Debug-Director = "www";
+    set req.http.X-DMN-Debug-Backend-Director = "www";
     set req.backend = www;
   }
 
@@ -304,10 +311,10 @@ sub vcl_recv {
   #     is slow to respond.
   if (! req.backend.healthy) {
     set req.grace = 1200s;
-    set req.http.X-DMN-Debug-Grace = "Backend NOT healthy! " + req.grace;
+    set req.http.X-DMN-Debug-Backend-Grace = "Backend NOT healthy! " + req.grace;
   } else {
     set req.grace = 300s;
-    set req.http.X-DMN-Debug-Grace = "Default: " + req.grace;
+    set req.http.X-DMN-Debug-Backend-Grace = "Default: " + req.grace;
   }
 
 
@@ -370,11 +377,25 @@ sub vcl_fetch {
   ## Set Grace Time
 
 
-  
+    
   ## Retry Support
   ## retry 404's on images as they might not have synced yet..
   ## be careful if you retry 403's as it can cause us issues with things like
   ## the rate limiter on comments (throws a 403 if you comment too fast)
+  ## WARNING
+  ##   if you retry a request it uses the MODIFIED req!
+  ##   This means, for instance, a different director can be selected if
+  ##   you've modified the req.url!
+  ##
+  if (req.http.X-DMN-Debug) {
+    if (req.http.X-DMN-Debug-Backend-Chain) {
+      set req.http.X-DMN-Debug-Backend-Chain = 
+        req.http.X-DMN-Debug-Backend-Chain + ":" + beresp.backend.name;  
+    } else {
+      set req.http.X-DMN-Debug-Backend-Chain = beresp.backend.name;  
+    }
+  }
+
   if (beresp.status == 404) {
     if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
       if (req.restarts == 0) {
@@ -384,17 +405,19 @@ sub vcl_fetch {
     }
   }
   
+  
   #if (beresp.status == 502 || beresp.status == 503) {
   #  set beresp.saintmode = 20s;
   #  return(restart);
   #}
 
 
+
+
   
   ## BAN Lurker support
   set beresp.http.x-url  = req.url;
   set beresp.http.x-host = req.http.host;
-
 
 
   # Always pass (pipe) on anything in the transaction (e-commerce)
@@ -594,15 +617,20 @@ sub vcl_deliver {
 
 
   if (req.http.X-DMN-Debug) {
-    set resp.http.X-DMN-Debug = req.http.X-DMN-Debug ;
     set resp.http.X-Forwarded-For = req.http.X-Forwarded-For ;
+    set resp.http.X-DMN-Debug = req.http.X-DMN-Debug ;
     set resp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
     set resp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
-    set resp.http.X-DMN-Debug-Director = req.http.X-DMN-Debug-Director ;
-    set resp.http.X-DMN-Debug-Grace = req.http.X-DMN-Debug-Grace ;
-  }
+    if ( req.http.X-DMN-Use-Uploads ) {
+      set resp.http.X-DMN-Use-Uploads = req.http.X-DMN-Use-Uploads;
+    }
+    
+    set resp.http.X-DMN-Debug-Backend-Director =
+      req.http.X-DMN-Debug-Backend-Director ;
+    set resp.http.X-DMN-Debug-Backend-Restarts = req.restarts ;
+    set resp.http.X-DMN-Debug-Backend-Chain = req.http.X-DMN-Debug-Backend-Chain;
+    set resp.http.X-DMN-Debug-Backend-Grace = req.http.X-DMN-Debug-Backend-Grace;
 
-  if (req.http.X-DMN-Debug) {
     if (req.http.X-Debug-Orig-Request) {
       set resp.http.X-Debug-Orig-Request = req.http.X-Debug-Orig-Request ;
       set resp.http.X-Debug-Orig-Host = req.http.X-Debug-Orig-Host ; 
@@ -633,7 +661,10 @@ sub vcl_deliver {
   unset resp.http.x-url;
   unset resp.http.x-host;
   
-  #remove resp.http.X-Varnish;
+  if (! req.http.X-DMN-Debug ) {
+    unset resp.http.X-DMN-Use-Uploads;
+    #unset resp.http.X-Varnish;
+  }
 }
 
 
