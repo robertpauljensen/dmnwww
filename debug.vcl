@@ -308,13 +308,13 @@ sub vcl_recv {
   }
 
 
-  # SAH Serve objects up to 20 minutes past their expiry if the backend
+  # SAH Serve objects up to 2 hours past their expiry if the backend
   #     is slow to respond.
   if (! req.backend.healthy) {
-    set req.grace = 1200s;
+    set req.grace = 120m;
     set req.http.X-DMN-Debug-Backend-Grace = "Backend NOT healthy! " + req.grace;
   } else {
-    set req.grace = 300s;
+    set req.grace = 10s;
     set req.http.X-DMN-Debug-Backend-Grace = "Default: " + req.grace;
   }
 
@@ -375,7 +375,6 @@ sub vcl_fetch {
   ## BAN support
   ## Unset cookies if possible
   ## Set TTL if needed
-  ## Set Grace Time
 
 
     
@@ -406,12 +405,22 @@ sub vcl_fetch {
     }
   }
   
-  
+
+  ## If we're down, punt with old content
   if (beresp.status == 502 || beresp.status == 503) {
-    set beresp.ttl = 0s;
-    set beresp.grace = 0s;
-    return (hit_for_pass); 
+    set beresp.saintmode = 10s;
+    if ( req.request != 'POST' ) {
+      return(restart);
+    }
+    else {
+      error 500 "Application Failure";
+    }
+    set beresp.grace = 120m;
   }
+    
+  ## Setup the grace Time
+  set beresp.grace = 30m;
+
   #if (beresp.status == 502 || beresp.status == 503) {
   #  set beresp.saintmode = 20s;
   #  return(restart);
@@ -505,9 +514,6 @@ sub vcl_fetch {
     }  
   }
 
-
-  ## Setup the grace Time
-  set beresp.grace = 30m;
 
 
 
