@@ -87,6 +87,11 @@ acl purgers {
 
 sub preserveOrigHeaders {
 
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", preserveOrigHeaders";
+  }  
+  
   set req.http.X-Debug-Orig-Request = req.request;
   set req.http.X-Debug-Orig-Host = req.http.host;
   set req.http.X-Debug-Orig-Port = req.http.port;
@@ -118,6 +123,11 @@ sub vcl_recv {
 
 
   set req.http.X-DMN-Debug = "Please";
+  
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath = "vcl_recv";
+  }  
+  
   call preserveOrigHeaders;
   
 
@@ -395,6 +405,11 @@ sub vcl_fetch {
   ## Unset cookies if possible
   ## Set TTL if needed
 
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_fetch";
+  }  
+  
 
     
   ## Retry Support
@@ -621,6 +636,11 @@ sub vcl_fetch {
 
 
 sub vcl_hit {
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_hit";
+  }  
+  
   if (req.request == "PURGE") {
     purge;
     error 200 "Purged.";
@@ -634,6 +654,11 @@ sub vcl_hit {
 
 
 sub vcl_miss {
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_miss";
+  }  
+  
   if (req.request == "PURGE") {
     purge;
     error 404 "Not In Cache.";
@@ -647,6 +672,11 @@ sub vcl_miss {
 
 
 sub vcl_pass {
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_pass";
+  }  
+  
   set req.http.X-PASSED = "Yep";
 }
 
@@ -656,10 +686,17 @@ sub vcl_pass {
 
 sub vcl_deliver {
 
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_deliver";
+  }  
+  
+
 
   if (req.http.X-DMN-Debug) {
     set resp.http.X-Forwarded-For = req.http.X-Forwarded-For ;
     set resp.http.X-DMN-Debug = req.http.X-DMN-Debug ;
+    set resp.http.X-DMN-Debug-Callpath =  req.http.X-DMN-Debug-Callpath;
     set resp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
     set resp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
     if ( req.http.X-DMN-Use-Uploads ) {
@@ -717,6 +754,11 @@ sub vcl_pipe {
   # here.  It is not set by default as it might break some broken web
   # applications, like IIS with NTLM authentication.
 
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_pipe";
+  }  
+  
 
   set bereq.http.connection = "close";
   set req.http.connection = "close";
