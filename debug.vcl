@@ -170,7 +170,17 @@ sub vcl_recv {
     error 404 "Not Found";
   }
   
-  
+  ## This is our cache primer - strip cookies, and miss
+  if (req.http.User-Agent == "DMN Cache Primer" &&
+      req.http.X-DMN-Cache-Primer == "Yes") {
+    if (req.http.X-DMN-Debug) {
+      set req.http.X-DMN-Cache-Primer = "Yes (cookies stripped)";
+    }
+    unset req.http.Cookie;
+    unset req.http.Accept-Encoding;
+    set req.http.Accept-Language = "en-US,en;q=0";
+    set req.hash_always_miss = true;
+  }    
   
   
   
@@ -310,12 +320,15 @@ sub vcl_recv {
 
   # SAH Serve objects up to 2 hours past their expiry if the backend
   #     is slow to respond.
-  if (! req.backend.healthy) {
+  if ( req.backend.healthy) {
+    set req.grace = 10s;
+    set req.http.X-DMN-Debug-Backend-Grace = "Default: " + req.grace;  
+  } else {
+    unset req.http.Cookie;
+    unset req.http.Accept-Encoding;
+    set req.http.Accept-Language = "en-US,en;q=0";
     set req.grace = 120m;
     set req.http.X-DMN-Debug-Backend-Grace = "Backend NOT healthy! " + req.grace;
-  } else {
-    set req.grace = 10s;
-    set req.http.X-DMN-Debug-Backend-Grace = "Default: " + req.grace;
   }
 
 
@@ -409,24 +422,34 @@ sub vcl_fetch {
   ## If we're down, punt with old content
   if (beresp.status == 502 || beresp.status == 503) {
     set beresp.saintmode = 10s;
-    if ( req.request != 'POST' ) {
+    if ( req.request != "POST" ) {
       return(restart);
     }
     else {
       error 500 "Application Failure";
     }
-    set beresp.grace = 120m;
   }
     
   ## Setup the grace Time
-  set beresp.grace = 30m;
-
-  #if (beresp.status == 502 || beresp.status == 503) {
-  #  set beresp.saintmode = 20s;
-  #  return(restart);
-  #}
+  set beresp.grace = 120m;
 
 
+  ## This is our cache primer - strip cookies, and force caching
+  ## This should be just plain vanilla content - no cookies, 
+  ## logged in messages, etc.
+  if (req.http.User-Agent == "DMN Cache Primer" &&
+      req.http.X-DMN-Cache-Primer) {
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
+    }
+    unset beresp.http.set-cookie;
+    set beresp.ttl = 3600s;
+    set beresp.http.Cache-Control = "max-age=3600";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "YES: Cache Primer: " + beresp.ttl;
+    }  
+  }    
+  
 
 
   
