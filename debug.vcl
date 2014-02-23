@@ -9,9 +9,10 @@ backend www1 {
   .host = "10.30.1.110";
   .port = "10080";
   .probe = {
-    # .url = "/robots.txt"; # Checks php-fpm backend
-    .url = "/ping"; # does NOT check php-fpm backend health!
-    .interval = 1s;
+    .url = "/robots.txt"; # Checks php-fpm backend
+    .interval = 5s;
+    # .url = "/ping"; # does NOT check php-fpm backend health!
+    # .interval = 1s;
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
@@ -24,9 +25,10 @@ backend www2 {
   .host = "10.30.1.111";
   .port = "10080";
   .probe = {
-    # .url = "/robots.txt"; # Checks php-fpm backend
-    .url = "/ping"; # does NOT check php-fpm backend health!
-    .interval = 1s;
+    .url = "/robots.txt"; # Checks php-fpm backend
+    .interval = 5s;
+    # .url = "/ping"; # does NOT check php-fpm backend health!
+    # .interval = 1s;
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
@@ -460,13 +462,12 @@ sub vcl_fetch {
   ## logged in messages, etc.
   if (req.http.User-Agent == "DMN Cache Primer" &&
       req.http.X-DMN-Cache-Primer) {
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
-    }
     unset beresp.http.set-cookie;
+    unset beresp.http.Vary;
     set beresp.ttl = 3600s;
     set beresp.http.Cache-Control = "max-age=3600";
     if (req.http.X-DMN-Debug) {
+      set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
       set beresp.http.X-Cacheable = "YES: Cache Primer: " + beresp.ttl;
     }  
   }    
@@ -635,55 +636,6 @@ sub vcl_fetch {
 
 
 
-sub vcl_hit {
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_hit";
-  }  
-  
-  if (req.request == "PURGE") {
-    purge;
-    error 200 "Purged.";
-  }
-  
-}
-
-
-
-
-
-
-sub vcl_miss {
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_miss";
-  }  
-  
-  if (req.request == "PURGE") {
-    purge;
-    error 404 "Not In Cache.";
-  }
-
-
-
-
-}
-
-
-
-sub vcl_pass {
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_pass";
-  }  
-  
-  set req.http.X-PASSED = "Yep";
-}
-
-
-
-
-
 sub vcl_deliver {
 
   if (req.http.X-DMN-Debug) {
@@ -732,18 +684,27 @@ sub vcl_deliver {
     set resp.http.X-Cache = "MISS";
   } else {
     set resp.http.X-Cache = "HIT (" + obj.hits + " Times)";
+    if (resp.http.set-cookie) {
+      unset resp.http.set-cookie;
+      set resp.http.X-DMN-WARNING = "set-cookie found on cached response ?";
+    }
   }
-  
-
-  ## BAN Lurker Support
-  unset resp.http.x-url;
-  unset resp.http.x-host;
   
   if (! req.http.X-DMN-Debug ) {
     unset resp.http.X-DMN-Use-Uploads;
     #unset resp.http.X-Varnish;
   }
+
+
+  ## BAN Lurker Support
+  unset resp.http.x-url;
+  unset resp.http.x-host;
+  unset resp.http.X-Powered-By;
+  
 }
+
+
+
 
 sub vcl_error {
 
@@ -751,9 +712,69 @@ sub vcl_error {
     set req.http.X-DMN-Debug-Callpath =
       req.http.X-DMN-Debug-Callpath + ", vcl_error";
   }  
+}
+
+
+
+
+sub vcl_hash {
+
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_hash";
+  }    
+}
+
+
+
+
+
+sub vcl_hit {
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_hit";
+  }  
   
+  if (req.request == "PURGE") {
+    purge;
+    error 200 "Purged.";
+  }
+  
+}
+
+
+
+
+sub vcl_miss {
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_miss";
+  }  
+  
+  if (req.request == "PURGE") {
+    purge;
+    error 404 "Not In Cache.";
+  }
+
+
+
 
 }
+
+
+
+sub vcl_pass {
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_pass";
+  }  
+  
+  set req.http.X-PASSED = "Yep";
+}
+
+
+
+
 
 sub vcl_pipe {
   # Note that only the first request to the backend will have
