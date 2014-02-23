@@ -9,7 +9,9 @@ backend www1 {
   .host = "10.30.1.110";
   .port = "10080";
   .probe = {
-    .url = "/robots.txt";
+    # .url = "/robots.txt"; # Checks php-fpm backend
+    .url = "/ping"; # does NOT check php-fpm backend health!
+    .interval = 1s;
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
@@ -22,7 +24,9 @@ backend www2 {
   .host = "10.30.1.111";
   .port = "10080";
   .probe = {
-    .url = "/robots.txt";
+    # .url = "/robots.txt"; # Checks php-fpm backend
+    .url = "/ping"; # does NOT check php-fpm backend health!
+    .interval = 1s;
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
@@ -37,6 +41,7 @@ backend upload1 {
   .port = "10081";
   .probe = {
     .url = "/ping";
+    .interval = 1s;
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
@@ -50,6 +55,7 @@ backend upload2 {
   .port = "10081";
   .probe = {
     .url = "/ping";
+    .interval = 1s;
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
