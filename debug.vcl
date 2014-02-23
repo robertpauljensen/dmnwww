@@ -454,7 +454,7 @@ sub vcl_fetch {
   }
     
   ## Setup the grace Time
-  set beresp.grace = 120m;
+  set beresp.grace = 240m;
 
 
   ## This is our cache primer - strip cookies, and force caching
@@ -465,7 +465,7 @@ sub vcl_fetch {
     unset beresp.http.set-cookie;
     unset beresp.http.Vary;
     set beresp.ttl = 3600s;
-    set beresp.http.Cache-Control = "max-age=3600";
+    set beresp.http.Cache-Control = "public, max-age = 3600";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
       set beresp.http.X-Cacheable = "YES: Cache Primer: " + beresp.ttl;
@@ -515,7 +515,7 @@ sub vcl_fetch {
   if (req.url ~ "\.(bmp|ico|jpe?g|gif|png)$") {
     unset beresp.http.set-cookie;
     set beresp.ttl = 90s;
-    set beresp.http.Cache-Control = "max-age=90";
+    set beresp.http.Cache-Control = "public, max-age = 90";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced Image File: " + beresp.ttl;
     }  
@@ -524,8 +524,9 @@ sub vcl_fetch {
   # Strip cookies for static files:
   if (req.url ~ "\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
     unset beresp.http.set-cookie;
+    unset beresp.http.expires;
     set beresp.ttl = 3600s;
-    set beresp.http.Cache-Control = "max-age=3600";
+    set beresp.http.Cache-Control = "public, max-age = 3600";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced Static File: " + beresp.ttl;
     }  
@@ -533,8 +534,9 @@ sub vcl_fetch {
 
   if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
     unset beresp.http.set-cookie;
+    unset beresp.http.expires;
     set beresp.ttl = 3600s;
-    set beresp.http.Cache-Control = "max-age=3600";
+    set beresp.http.Cache-Control = "public, max-age = 3600";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
     }  
@@ -572,7 +574,7 @@ sub vcl_fetch {
   #if ( req.url == "/data/submast.gif") {
   #  unset beresp.http.set-cookie;
   #  set beresp.ttl = 300s;
-  #  set beresp.http.Cache-Control = "max-age=300";
+  #  set beresp.http.Cache-Control = "max-age = 300";
   #  set beresp.http.X-Cacheable = "YES: Submast Image";
   #  return(deliver);
   #}
@@ -585,7 +587,7 @@ sub vcl_fetch {
   #    req.url == "/stories?func=viewAtom" ){
   #      unset beresp.http.set-cookie;
   #      set beresp.ttl = 300s;
-  #      set beresp.http.Cache-Control ="max-age=300";
+  #      set beresp.http.Cache-Control ="max-age = 300";
   #      set beresp.http.X-Cacheable = "YES:Forced Cache RSS/Atom Feed";
   #      return(deliver);
   #}
@@ -608,7 +610,7 @@ sub vcl_fetch {
   #  set beresp.ttl = 180s;
   #  set beresp.http.X-FrontDoor = "Yes";
   #  set beresp.http.X-Cacheable = "YES:Forced Cache Front Door";
-  #  set beresp.http.Cache-Control = "must-revalidate, max-age=180";
+  #  set beresp.http.Cache-Control = "must-revalidate, max-age = 180";
   #  return(deliver);
   #}
 
