@@ -745,6 +745,15 @@ sub vcl_deliver {
   }
 }
 
+sub vcl_error {
+
+  if (req.http.X-DMN-Debug) {
+    set req.http.X-DMN-Debug-Callpath =
+      req.http.X-DMN-Debug-Callpath + ", vcl_error";
+  }  
+  
+
+}
 
 sub vcl_pipe {
   # Note that only the first request to the backend will have
