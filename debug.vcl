@@ -66,6 +66,12 @@ backend upload2 {
   .max_connections = 128;
 }
 
+backend fail {
+  .host = "localhost";
+  .port = "21121";
+  .probe = { .url = "/asfasfasf"; .initial = 0; .interval = 1d; }
+}
+
 
 director www round-robin {
   { .backend = www1; }
@@ -322,19 +328,25 @@ sub vcl_recv {
   ##   This means, for instance, if you changed the req.url -
   ##   you may get a DIFFERENT director on restart!!
   ## WARNING!
-  if (req.http.X-DMN-Use-Uploads || 
-       (req.url ~ "^/wp-content/uploads" && req.request == "GET" )) {
-    unset req.http.Cookie;
-    set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
-    set req.http.X-DMN-Debug-Backend-Director = 
-      "uploads (strips cookies): " + req.url;
-    set req.http.X-DMN-Use-Uploads = "Yes";  
-    set req.backend = uploads;  
-  } else {
-    set req.http.X-DMN-Debug-Backend-Director = "www";
-    set req.backend = www;
+  if (req.restarts == 2) {
+    # We only have 2 backends - so everything must be down
+    # Force cached content using fail backend
+    set req.backend = fail;
   }
-
+  else {
+    if (req.http.X-DMN-Use-Uploads || 
+         (req.url ~ "^/wp-content/uploads" && req.request == "GET" )) {
+      unset req.http.Cookie;
+      set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
+      set req.http.X-DMN-Debug-Backend-Director = 
+        "uploads (strips cookies): " + req.url;
+      set req.http.X-DMN-Use-Uploads = "Yes";  
+      set req.backend = uploads;  
+    } else {
+      set req.http.X-DMN-Debug-Backend-Director = "www";
+      set req.backend = www;
+    }
+  }
 
   # SAH Serve objects up to 2 hours past their expiry if the backend
   #     is slow to respond.
@@ -351,8 +363,14 @@ sub vcl_recv {
 
 
   if ( req.http.Cookie ) {
+    if (req.http.X-DMN-Debug) {
+      set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
+    }  
     return( pass );
   } else {
+    if (req.http.X-DMN-Debug) {
+      set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
+    }  
     return( lookup);
   }
   
@@ -656,12 +674,15 @@ sub vcl_deliver {
     if ( req.http.X-DMN-Use-Uploads ) {
       set resp.http.X-DMN-Use-Uploads = req.http.X-DMN-Use-Uploads;
     }
+    if (req.http.X-DMN-Debug) {
+    }  
     
     set resp.http.X-DMN-Debug-Backend-Director =
       req.http.X-DMN-Debug-Backend-Director ;
     set resp.http.X-DMN-Debug-Backend-Restarts = req.restarts ;
     set resp.http.X-DMN-Debug-Backend-Chain = req.http.X-DMN-Debug-Backend-Chain;
     set resp.http.X-DMN-Debug-Backend-Grace = req.http.X-DMN-Debug-Backend-Grace;
+    set resp.http.X-DMN-Debug-Recv-Returned = req.http.X-DMN-Debug-Recv-Returned;
 
     if (req.http.X-Debug-Orig-Request) {
       set resp.http.X-Debug-Orig-Request = req.http.X-Debug-Orig-Request ;
@@ -713,7 +734,12 @@ sub vcl_error {
   if (req.http.X-DMN-Debug) {
     set req.http.X-DMN-Debug-Callpath =
       req.http.X-DMN-Debug-Callpath + ", vcl_error";
-  }  
+  }
+  
+  # We only have 2 backends...more restarts would be silly
+  if ((req.restarts < 3) && ((obj.status == 502 || obj.status == 503))) {
+    return(restart);
+  }
 }
 
 
