@@ -224,7 +224,7 @@ sub vcl_recv {
     set req.http.X-DMN-Debug-Encoding-Changed = "No";
   }
   
-  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
+  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
     if (req.http.X-DMN-Debug) {
       set req.http.X-DMN-Debug-Encoding-Changed = 
         "YES - REMOVED from compressed Media File";
@@ -296,7 +296,7 @@ sub vcl_recv {
   if (req.http.X-DMN-Debug) {
     set req.http.X-DMN-Debug-Cookies-Unset = "No";
   }
-  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
+  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
     if (req.http.X-DMN-Debug) {
       set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
     }  
@@ -530,21 +530,25 @@ sub vcl_fetch {
   set beresp.http.X-Cacheable = "YES: No Changes Made";
 
   # Strip cookies for image files:
-  if (req.url ~ "\.(bmp|ico|jpe?g|gif|png)$") {
+  if (req.url ~ "\.(bmp|ico|jpe?g|gif|png)(\?[A-Za-z0-9]+)?$") {
     unset beresp.http.set-cookie;
     set beresp.ttl = 90s;
     set beresp.http.Cache-Control = "public, max-age = 90";
+    set req.http.X-DMN-Adjust-Age-Expires = "Yes";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced Image File: " + beresp.ttl;
     }  
   }
       
   # Strip cookies for static files:
-  if (req.url ~ "\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
+  if (req.url ~
+"\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[A-Za-z0-9]+)?$")
+{
     unset beresp.http.set-cookie;
     unset beresp.http.expires;
     set beresp.ttl = 3600s;
     set beresp.http.Cache-Control = "public, max-age = 3600";
+    set req.http.X-DMN-Adjust-Age-Expires = "Yes";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced Static File: " + beresp.ttl;
     }  
@@ -555,6 +559,7 @@ sub vcl_fetch {
     unset beresp.http.expires;
     set beresp.ttl = 3600s;
     set beresp.http.Cache-Control = "public, max-age = 3600";
+    set req.http.X-DMN-Adjust-Age-Expires = "Yes";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
     }  
@@ -663,6 +668,11 @@ sub vcl_deliver {
       req.http.X-DMN-Debug-Callpath + ", vcl_deliver";
   }  
   
+  if (req.http.X-DMN-Adjust-Age-Expires) {
+    set resp.http.expires = obj.ttl;
+    set resp.http.X-DMN-Adjust-Age-Expires =
+      resp.http.expires + " (" + obj.ttl + ")";
+  }
 
 
   if (req.http.X-DMN-Debug) {
