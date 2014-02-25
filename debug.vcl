@@ -548,7 +548,7 @@ sub vcl_fetch {
   }
 
   # Tagged - so give it a long TTL as the tag will force refresh
-  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)\?([A-Za-z0-9]+)$") ||
+  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)\?([A-Za-z0-9]+)$" ||
       req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)\?([A-Za-z0-9]+)$") {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
@@ -583,7 +583,7 @@ sub vcl_fetch {
   }
   else {  
     # Not Tagged - These can change more often, so give it short ttl
-    if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$") ||
+    if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$" ||
         req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
       set beresp.ttl = 120s;
       set beresp.http.Cache-Control = "public, max-age = 120";
