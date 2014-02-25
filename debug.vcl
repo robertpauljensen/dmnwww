@@ -530,41 +530,70 @@ sub vcl_fetch {
   set beresp.http.X-Cacheable = "YES: No Changes Made";
 
   # Strip cookies for image files:
-  if (req.url ~ "\.(bmp|ico|jpe?g|gif|png)(\?[A-Za-z0-9]+)?$") {
-    unset beresp.http.set-cookie;
-    set beresp.ttl = 90s;
-    set beresp.http.Cache-Control = "public, max-age = 90";
-    set req.http.X-DMN-Adjust-Age-Expires = "Yes";
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "YES:Forced Image File: " + beresp.ttl;
-    }  
-  }
-      
-  # Strip cookies for static files:
-  if (req.url ~
-"\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[A-Za-z0-9]+)?$")
-{
+  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$") {
     unset beresp.http.set-cookie;
     unset beresp.http.expires;
-    set beresp.ttl = 3600s;
-    set beresp.http.Cache-Control = "public, max-age = 3600";
-    set req.http.X-DMN-Adjust-Age-Expires = "Yes";
     if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "YES:Forced Static File: " + beresp.ttl;
+      set beresp.http.X-Cacheable = "YES:Forced Image File: ";
+    }  
+  }
+  
+  # Strip cookies for static files:
+  if (req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[a-z0-9]+)?$") {
+    unset beresp.http.set-cookie;
+    unset beresp.http.expires;
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "YES:Forced Static File: ";
     }  
   }
 
+  # Tagged - so give it a long TTL as the tag will force refresh
+  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)\?([A-Za-z0-9]+)$") ||
+      req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)\?([A-Za-z0-9]+)$") {
+    set beresp.ttl = 7d;
+    set beresp.http.Cache-Control = "public, max-age = 604800";
+    set req.http.X-DMN-Adjust-Age = "Yes";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = 
+        beresp.http.X-Cacheable + "Tagged! (" + beresp.ttl + ")";
+    }  
+  }
+      
+  # Tagged - so give it a long TTL as the tag will force refresh
   if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
     unset beresp.http.set-cookie;
     unset beresp.http.expires;
-    set beresp.ttl = 3600s;
-    set beresp.http.Cache-Control = "public, max-age = 3600";
-    set req.http.X-DMN-Adjust-Age-Expires = "Yes";
+    set beresp.ttl = 7d;
+    set beresp.http.Cache-Control = "public, max-age = 604800";
+    set req.http.X-DMN-Adjust-Age = "Yes";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
     }  
   }
 
+
+  # If its a DMN theme image, cache it for longer..
+  if (req.url ~ "(?i)DMN2013/img/.*\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$" ) {
+    set beresp.ttl = 7d;
+    set beresp.http.Cache-Control = "public, max-age = 604800";
+    set req.http.X-DMN-Adjust-Age = "Yes";
+    if (req.http.X-DMN-Debug) {
+      set beresp.http.X-Cacheable = "YES:Theme Image File: " + beresp.ttl;
+    }
+  }
+  else {  
+    # Not Tagged - These can change more often, so give it short ttl
+    if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$") ||
+        req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
+      set beresp.ttl = 120s;
+      set beresp.http.Cache-Control = "public, max-age = 120";
+      set req.http.X-DMN-Adjust-Age = "Yes";
+      if (req.http.X-DMN-Debug) {
+        set beresp.http.X-Cacheable = 
+          beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
+      }  
+    }
+  }
   
 
   # Only cache responses with no cookies
@@ -668,10 +697,10 @@ sub vcl_deliver {
       req.http.X-DMN-Debug-Callpath + ", vcl_deliver";
   }  
   
-  if (req.http.X-DMN-Adjust-Age-Expires) {
-    set resp.http.expires = obj.ttl;
-    set resp.http.X-DMN-Adjust-Age-Expires =
-      resp.http.expires + " (" + obj.ttl + ")";
+  if (req.http.X-DMN-Adjust-Age) {
+    unset resp.http.X-DMN-Adjust-Age;
+    set resp.http.age = "0";
+    # set resp.http.expires = obj.ttl;
   }
 
 
