@@ -87,6 +87,8 @@ director uploads round-robin {
 acl purgers {
   "localhost";
   "10.30.1.0"/24;
+  "72.52.81.238";
+  "72.52.81.239";
 }
 
 
