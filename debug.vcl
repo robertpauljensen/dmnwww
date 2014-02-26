@@ -93,36 +93,13 @@ acl purgers {
 
 
 
-sub preserveOrigHeaders {
-
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", preserveOrigHeaders";
-  }  
-  
-  set req.http.X-Debug-Orig-Request = req.request;
-  set req.http.X-Debug-Orig-Host = req.http.host;
-  set req.http.X-Debug-Orig-Port = req.http.port;
-  set req.http.X-Debug-Orig-Url  = req.url;
-  set req.http.X-Debug-Orig-Client  = client.ip;
-  if (req.http.Accept-Encoding) {
-    set req.http.X-Debug-Orig-Accept-Encoding =
-      req.http.Accept-Encoding;
-  }
-  set req.http.X-Debug-Restarts = req.restarts;  
-  if (req.http.X-Forwarded-For) {
-    set req.http.X-Debug-Orig-Forwarded-For = req.http.X-Forwarded-For;
-  }
-
-}
-
-
 sub vcl_recv {
   ## Turn on Debug (if desired)
   ## Preserve the origin headers (if desired)
   ## Handle Purge, Bans, Refresh & 'Odd' verbs
   ##  (NO pre-processing, normalization - just do as we're told!)
   ## Special Cases
+  ## Strip Cookies
   ## Normalize Headers
   ## Normalize URLS
   ## Set Backend
@@ -131,12 +108,27 @@ sub vcl_recv {
 
 
   set req.http.X-DMN-Debug = "Please";
-  
+
   if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath = "vcl_recv";
-  }  
-  
-  call preserveOrigHeaders;
+    set req.http.X-DMN-Debug-Callpath = "vcl_recv";  
+  }
+
+  #if (req.http.X-DMN-Debug) {
+  #  set req.http.X-Debug-Orig-Request = req.request;
+  #  set req.http.X-Debug-Orig-Host = req.http.host;
+  #  set req.http.X-Debug-Orig-Port = req.http.port;
+  #  set req.http.X-Debug-Orig-Url  = req.url;
+  #  set req.http.X-Debug-Orig-Client  = client.ip;
+  #  if (req.http.Accept-Encoding) {
+  #    set req.http.X-Debug-Orig-Accept-Encoding =
+  #      req.http.Accept-Encoding;
+  #  }
+  #  set req.http.X-Debug-Restarts = req.restarts;  
+  #  if (req.http.X-Forwarded-For) {
+  #    set req.http.X-Debug-Orig-Forwarded-For = req.http.X-Forwarded-For;
+  #  }
+  #}  
+
   
 
   # allow PURGE from localhost and 192.168.55...
@@ -207,6 +199,33 @@ sub vcl_recv {
   }    
   
   
+  ## Strip Cookies
+  ##
+  ##wp-settings-43=libraryContent%3Dbrowse%26editor%3Dhtml;
+  ##wp-settings-time-43=1392979754;
+  ##comment_author_5d38c4e41e44de264c207c20ef393a9a=test;
+  ##comment_author_email_5d38c4e41e44de264c207c20ef393a9a=nunyabizness%40example.com;
+  ##PHPSESSID=fni3n9n509tbf6k3v479jse0d4;
+  ##__auc=4af57355144325b1e53b00ac0bc;
+  ##__utma=97216394.1162005118.1392414237.1393362180.1393378581.52;
+  ##__utmc=97216394;
+  ##__utmz=97216394.1392414237.1.1.utmcsr=(direct)|utmccn=(direct)|utmcmd=(none)
+  ##
+  ## Strip Google cookies
+  if (req.http.Cookie) {
+    #set req.http.Cookie = 
+      # removes all cookies named __utm? (utma, utmb...) and __auc
+      #regsuball(req.http.Cookie, "(^|; ) *__utm.=[^;]+;? *", "\1");
+      #regsuball(req.http.Cookie, "(^|; ) *__auc=[^;]+;? *", "\1");
+    set req.http.Cookie = ";" + req.http.Cookie;
+    set req.http.Cookie = regsuball(req.http.Cookie, "; +", ";");
+    set req.http.Cookie = regsuball(req.http.Cookie, ";(wp[_-][^=]+|wordpress[_-][^=]+|comment[^=]+)=", "; \1=");
+    set req.http.Cookie = regsuball(req.http.Cookie, ";[^ ][^;]*", "");
+    set req.http.Cookie = regsuball(req.http.Cookie, "^[; ]+|[; ]+$", "");
+
+    set req.http.X-DMN-Debug-Post-GA-Cookies = req.http.Cookie;
+  }
+  
   
   ## NORMALIZE everything
   ##  Forwarded-For
@@ -259,6 +278,7 @@ sub vcl_recv {
 
   
   ## Normalize URL's
+  
   # SAH - Normalize all the RSS crap
   if (req.url ~ "(?i)^/rss$" || 
       req.url ~ "(?i)^/rss.xml$" ||
@@ -296,6 +316,19 @@ sub vcl_recv {
   if (req.http.X-DMN-Debug) {
     set req.http.X-DMN-Debug-Cookies-Unset = "No";
   }
+  
+  # We need some sort of micro-caching on the homepage..
+  # But we can't do that for logged in users.
+  if (req.url == "/") {
+    if (!(req.http.cookie ~ "wordpress_logged_in")) {
+      unset req.http.cookie;
+      if (req.http.X-DMN-Debug) {
+        set req.http.X-DMN-Debug-Cookies-Unset = "YES - Front Door, NOT logged in";
+      }  
+    }
+  }
+  
+  
   if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
     if (req.http.X-DMN-Debug) {
       set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
@@ -507,7 +540,26 @@ sub vcl_fetch {
     }  
     return (hit_for_pass); 
   }
- 
+
+  # We need some sort of micro-caching on the homepage..
+  # But we can't do that for logged in users.
+  if (req.url == "/") {
+    if (!(req.http.cookie ~ "wordpress_logged_in")) {
+      unset beresp.http.set-cookie;
+      unset beresp.http.expires;
+      set beresp.ttl = 30s;
+      set beresp.http.Cache-Control = "public, max-age = 30";
+      set beresp.http.X-DMN-Adjust-Age = "Yes";
+      if (req.http.X-DMN-Debug) {
+        set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
+      }  
+    }
+    return(deliver);
+  }
+  
+  
+
+
   # Honour Cache Controls
   if ( beresp.http.Cache-Control ~ "no-cache" ) {
     set beresp.ttl = 0s;
@@ -552,7 +604,7 @@ sub vcl_fetch {
       req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)\?([A-Za-z0-9]+)$") {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
-    set req.http.X-DMN-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-Adjust-Age = "Yes";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = 
         beresp.http.X-Cacheable + "Tagged! (" + beresp.ttl + ")";
@@ -565,7 +617,7 @@ sub vcl_fetch {
     unset beresp.http.expires;
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
-    set req.http.X-DMN-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-Adjust-Age = "Yes";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
     }  
@@ -576,7 +628,7 @@ sub vcl_fetch {
   if (req.url ~ "(?i)DMN2013/img/.*\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$" ) {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
-    set req.http.X-DMN-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-Adjust-Age = "Yes";
     if (req.http.X-DMN-Debug) {
       set beresp.http.X-Cacheable = "YES:Theme Image File: " + beresp.ttl;
     }
@@ -587,7 +639,7 @@ sub vcl_fetch {
         req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
       set beresp.ttl = 120s;
       set beresp.http.Cache-Control = "public, max-age = 120";
-      set req.http.X-DMN-Adjust-Age = "Yes";
+      set beresp.http.X-DMN-Adjust-Age = "Yes";
       if (req.http.X-DMN-Debug) {
         set beresp.http.X-Cacheable = 
           beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
@@ -697,8 +749,9 @@ sub vcl_deliver {
       req.http.X-DMN-Debug-Callpath + ", vcl_deliver";
   }  
   
-  if (req.http.X-DMN-Adjust-Age) {
-    unset resp.http.X-DMN-Adjust-Age;
+  if (resp.http.X-DMN-Adjust-Age) {
+    #unset resp.http.X-DMN-Adjust-Age;
+    set resp.http.X-DMN-Debug-Age = resp.http.age;
     set resp.http.age = "0";
     # set resp.http.expires = obj.ttl;
   }
@@ -713,8 +766,9 @@ sub vcl_deliver {
     if ( req.http.X-DMN-Use-Uploads ) {
       set resp.http.X-DMN-Use-Uploads = req.http.X-DMN-Use-Uploads;
     }
-    if (req.http.X-DMN-Debug) {
-    }  
+    #if ( req.http.X-DMN-Debug-Post-GA-Cookies ) {
+    #  set resp.http.X-DMN-Debug-Post-GA-Cookies = req.http.X-DMN-Debug-Post-GA-Cookies;
+    #}
     
     set resp.http.X-DMN-Debug-Backend-Director =
       req.http.X-DMN-Debug-Backend-Director ;
