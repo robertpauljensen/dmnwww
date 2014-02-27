@@ -178,7 +178,9 @@ sub vcl_recv {
   #
   # If they're hitting the admin/login page or some Authenticated page
   # just pass and skip all the processing
-  if (req.url ~ "^/wp-(login|admin)" || req.http.Authorization ) {
+  if (req.url ~ "^/wp-(login|admin)" ||
+      req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
+      req.http.Authorization ) {
     return (pass);
   }
   
@@ -208,7 +210,8 @@ sub vcl_recv {
   
   
   ## Strip Cookies
-  ## TODO: Figure out whats setting this PHP Session
+  ## TODO: Figure out whats setting this PHP Session 
+  ## TODO: NOTE: its the social login plugin - Now what do we do?
   ## PHPSESSID=fni3n9n509tbf6k3v479jse0d4;
   ##
   ## Strip Google cookies
@@ -424,6 +427,7 @@ sub vcl_recv {
 		      
 
 sub vcl_fetch {
+  ## Throw out the easy crap
   ## Retry Support
   ## BAN support
   ## Unset cookies if possible
@@ -431,7 +435,52 @@ sub vcl_fetch {
 
   set req.http.X-DMN-Debug-Callpath =
     req.http.X-DMN-Debug-Callpath + ", vcl_fetch";
+
+  if (req.http.X-DMN-Debug-Backend-Chain) {
+    set req.http.X-DMN-Debug-Backend-Chain = 
+      req.http.X-DMN-Debug-Backend-Chain + ":" + beresp.backend.name;  
+  } else {
+    set req.http.X-DMN-Debug-Backend-Chain = beresp.backend.name;  
+  }
+
+
+
+
+
+  ## Throw out the easy crap
+  ## Don't cache admin pages
+  if (req.url ~ "^/wp-(login|admin)" ||
+      req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
+      req.http.Authorization ) {
+    set beresp.ttl = 0s;
+    return (deliver);
+  }
   
+  ## TODO: Figure out POSTs and retry logic
+  ## For now, just punt
+  ## Do NOT touch POSTs
+  if (req.request == "POST") {
+    return(deliver);
+  }
+
+  ## Don't retry bad bots or spammers -
+  ## Don't cache them either (so no hit for pass)
+  if (beresp.status == 666 || beresp.status == 777) {
+    set beresp.ttl = 0s;
+    return(deliver);
+  }
+  
+  # Always pass (pipe) on anything in the transaction (e-commerce)
+  # folder. (Safety feature)
+  # This should never happen as we return(pipe) in vcl_rcv,
+  # But Just In Case (tm)
+  if (req.url ~ "^/transaction" ) {
+    set beresp.ttl = 0s;
+    set beresp.http.X-Cacheable = "NO: Transaction Folder";
+    return (deliver); 
+  }
+
+
 
     
   ## Retry Support
@@ -443,12 +492,6 @@ sub vcl_fetch {
   ##   This means, for instance, a different director can be selected if
   ##   you've modified the req.url!
   ##
-  if (req.http.X-DMN-Debug-Backend-Chain) {
-    set req.http.X-DMN-Debug-Backend-Chain = 
-      req.http.X-DMN-Debug-Backend-Chain + ":" + beresp.backend.name;  
-  } else {
-    set req.http.X-DMN-Debug-Backend-Chain = beresp.backend.name;  
-  }
 
   if (beresp.status == 404 &&
       req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
@@ -457,8 +500,9 @@ sub vcl_fetch {
       return(restart);
     }
   }
-  
 
+
+  ## TODO: Figure out POSTs and retry logic
   ## If we're down, punt with old content
   if (beresp.status == 502 || beresp.status == 503) {
     set beresp.saintmode = 10s;
@@ -466,10 +510,13 @@ sub vcl_fetch {
       return(restart);
     }
     else {
+      set beresp.ttl = 3s;
       error 500 "Application Failure";
     }
   }
     
+
+
   ## Setup the grace Time
   set beresp.grace = 240m;
 
@@ -494,14 +541,6 @@ sub vcl_fetch {
   set beresp.http.x-url  = req.url;
   set beresp.http.x-host = req.http.host;
 
-
-  # Always pass (pipe) on anything in the transaction (e-commerce)
-  # folder. (Safety feature)
-  if (req.url ~ "^/transaction" ) {
-    set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO: Transaction Folder";
-    return (hit_for_pass); 
-  }
 
   # We need some sort of micro-caching on the homepage..
   # But we can't do that for logged in users.
@@ -767,10 +806,17 @@ sub vcl_error {
   set req.http.X-DMN-Debug-Callpath =
     req.http.X-DMN-Debug-Callpath + ", vcl_error";
   
-  # error 777 ugg boots and webgui spammers..
+
+  # Dont retry PURGE/BAN
+  if ( req.request == "PURGE" || req.request == "BAN" ) {
+    return(deliver);
+  }
   
+  
+  # error 777 ugg boots and webgui spammers..
+  # error 666 bad bots
   # We only have 2 backends...more restarts would be silly
-  if ((req.restarts < 3) && ((obj.status == 502 || obj.status == 503))) {
+  if ((req.restarts < 3) && (!(obj.status == 666 || obj.status == 777)) ) {
     return(restart);
   }
 }
