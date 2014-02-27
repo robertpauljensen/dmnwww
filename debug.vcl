@@ -92,7 +92,7 @@ acl purgers {
 }
 
 
-
+import header;
 
 
 sub vcl_recv {
@@ -210,11 +210,12 @@ sub vcl_recv {
   
   
   ## Strip Cookies
-  ## TODO: Figure out whats setting this PHP Session 
-  ## TODO: NOTE: its the social login plugin - Now what do we do?
+  ## TODO: PHPSESSID is the social login plugin. 
+  ## It doesn't seem to require it unless your logging in (see above)
+  ## so nuke it
   ## PHPSESSID=fni3n9n509tbf6k3v479jse0d4;
   ##
-  ## Strip Google cookies
+  ## Strip everything except wordpress cookies
   if (req.http.Cookie) {
     set req.http.Cookie = ";" + req.http.Cookie;
     set req.http.Cookie = regsuball(req.http.Cookie, "; +", ";");
@@ -225,6 +226,9 @@ sub vcl_recv {
     set req.http.X-DMN-Debug-Cooked-Cookies = req.http.Cookie;
   }
   
+  if ( req.http.Cookie ~ "^ *$" ) {
+    unset req.http.Cookie;
+  }
   
   ## NORMALIZE everything
   ##  Forwarded-For
@@ -301,6 +305,13 @@ sub vcl_recv {
   
   # We need some sort of micro-caching on the homepage..
   # But we can't do that for logged in users.
+  if (req.http.cookie ~ "wordpress_logged_in") {
+    set req.http.X-DMN-LOGGED-IN = "YES";  
+  }
+  else {
+    unset req.http.X-DMN-LOGGED-IN;
+  }
+  
   if (req.url == "/") {
     if (!(req.http.cookie ~ "wordpress_logged_in")) {
       unset req.http.cookie;
@@ -373,6 +384,14 @@ sub vcl_recv {
   }
 
 
+#  if ( req.http.X-DMN-LOGGED-IN ) {
+#    set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
+#    return( pass);
+#  } else {
+#    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
+#    return(lookup);
+#  }
+  
   if ( req.http.Cookie ) {
     set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
     return( pass );
@@ -541,54 +560,72 @@ sub vcl_fetch {
   set beresp.http.x-url  = req.url;
   set beresp.http.x-host = req.http.host;
 
+  unset req.http.X-DMN-OVERRIDE-CACHE-CONTROL;
+  if (req.http.cookie ~ "wordpress_logged_in") {
+    set req.http.X-DMN-LOGIN = "YES";
+  }
+  else {
+    unset req.http.X-DMN-LOGIN; # = "NO";
+  }
 
+  ## Strip out Cookies where possible
+  # Strip cookies for image files:
+  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$" ||
+      req.url ~ "(?i)\.(js|css|woff|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[a-z0-9]+)?$" ||
+      req.url ~ ".*\.(css|js)\?ver=.*" ) {
+    unset beresp.http.Set-Cookie;
+    unset beresp.http.expires;
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
+    unset req.http.X-DMN-LOGIN;
+  }
+  
+  ## If we're not logged in, kill the dam PHPSESSID cookie
+  if (!( req.http.X-DMN-LOGIN)) {
+    if (beresp.http.Set-Cookie) {
+      header.remove(beresp.http.Set-Cookie, "PHPSESSID");
+      set beresp.http.X-DMN-Debug-PHPSESSID = "Removed";
+      if (beresp.http.Set-Cookie ~ "^ *$") {
+        unset beresp.http.Set-Cookie;
+        set beresp.http.X-DMN-Debug-PHPSESSID = "Removed, Set-Cookie UNSET";
+      }
+    }
+  }
+  
   # We need some sort of micro-caching on the homepage..
-  # But we can't do that for logged in users.
   if (req.url == "/") {
-    if (!(req.http.cookie ~ "wordpress_logged_in")) {
-      unset beresp.http.set-cookie;
       unset beresp.http.expires;
       set beresp.ttl = 30s;
       set beresp.http.Cache-Control = "public, max-age = 30";
       set beresp.http.X-DMN-Adjust-Age = "Yes";
       set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
-    }
-    return(deliver);
+      set req.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
+      #return(deliver);
+  }
+  
+  if (req.url ~ "/permalink/") {
+      unset beresp.http.expires;
+      set beresp.ttl = 30s;
+      set beresp.http.Cache-Control = "public, max-age = 30";
+      set beresp.http.X-DMN-Adjust-Age = "Yes";
+      set beresp.http.X-Cacheable = "Foced cache Story Page (" + beresp.ttl + ")";
+      set req.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
+      #return(deliver);
   }
   
   
-
-
-  # Honour Cache Controls
-  if ( beresp.http.Cache-Control ~ "no-cache" ) {
-    set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
-    return(hit_for_pass);
-  }
-
-  if ( beresp.http.Cache-Control ~ "private" ) {
-    set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO:Cache-Control=private";
-    return(hit_for_pass);
-  }
-
-
   ## Strip out Cookies where possible
   set beresp.http.X-Cacheable = "YES: No Changes Made";
 
-  # Strip cookies for image files:
+
   if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$") {
-    unset beresp.http.set-cookie;
-    unset beresp.http.expires;
     set beresp.http.X-Cacheable = "YES:Forced Image File: ";
   }
   
   # Strip cookies for static files:
   if (req.url ~ "(?i)\.(js|css|woff|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[a-z0-9]+)?$") {
-    unset beresp.http.set-cookie;
-    unset beresp.http.expires;
     set beresp.http.X-Cacheable = "YES:Forced Static File: ";
   }
+
 
   # Tagged - so give it a long TTL as the tag will force refresh
   if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)\?([A-Za-z0-9]+)$" ||
@@ -602,7 +639,6 @@ sub vcl_fetch {
       
   # Tagged - so give it a long TTL as the tag will force refresh
   if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
-    unset beresp.http.set-cookie;
     unset beresp.http.expires;
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
@@ -633,8 +669,24 @@ sub vcl_fetch {
   }
   
 
+
+  # Honour Cache Controls
+  if (!(req.http.X-DMN-OVERRIDE-CACHE-CONTROL)) {  
+    if ( beresp.http.Cache-Control ~ "no-cache" ) {
+      set beresp.ttl = 0s;
+      set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
+      return(hit_for_pass);
+    }
+    if ( beresp.http.Cache-Control ~ "private" ) {
+      set beresp.ttl = 0s;
+      set beresp.http.X-Cacheable = "NO:Cache-Control=private";
+      return(hit_for_pass);
+    }
+  }
+
   # Only cache responses with no cookies
-  if (beresp.http.set-cookie) {
+  # and no login
+  if (beresp.http.set-cookie || req.http.X-DMN-LOGIN) {
     set beresp.ttl = 0s;
     set beresp.http.X-Cacheable = "NO: SET COOKIE";
     return(hit_for_pass);
@@ -742,6 +794,7 @@ sub vcl_deliver {
     set resp.http.X-DMN-Debug-Callpath =  req.http.X-DMN-Debug-Callpath;
     set resp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
     set resp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
+    #set resp.http.X-DMN-Debug-PHPSESSID =  beresp.http.X-DMN-Debug-PHPSESSID;
     if ( req.http.X-DMN-Use-Uploads ) {
       set resp.http.X-DMN-Use-Uploads = req.http.X-DMN-Use-Uploads;
     }
