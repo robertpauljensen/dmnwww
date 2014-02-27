@@ -498,25 +498,6 @@ sub vcl_fetch {
   }
 
 
-
-
-
-  ## Throw out the easy crap
-  ## Don't cache admin pages
-  if (req.url ~ "^/wp-(login|admin)" ||
-      req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
-      req.http.Authorization ) {
-    set beresp.ttl = 0s;
-    return (deliver);
-  }
-  
-  ## TODO: Figure out POSTs and retry logic
-  ## For now, just punt
-  ## Do NOT touch POSTs
-  if (req.request == "POST") {
-    return(deliver);
-  }
-
   ## Don't retry bad bots or spammers -
   ## Don't cache them either (so no hit for pass)
   if (beresp.status == 666 || beresp.status == 777) {
@@ -524,19 +505,6 @@ sub vcl_fetch {
     return(deliver);
   }
   
-  # Always pass (pipe) on anything in the transaction (e-commerce)
-  # folder. (Safety feature)
-  # This should never happen as we return(pipe) in vcl_rcv,
-  # But Just In Case (tm)
-  if (req.url ~ "^/transaction" ) {
-    set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO: Transaction Folder";
-    return (deliver); 
-  }
-
-
-
-    
   ## Retry Support
   ## retry 404's on images as they might not have synced yet..
   ## be careful if you retry 403's as it can cause us issues with things like
@@ -569,7 +537,43 @@ sub vcl_fetch {
     }
   }
     
+  ## TODO: Figure out POSTs and retry logic
+  ## For now, just punt
+  ## Do NOT touch POSTs
+  if (req.request == "POST") {
+    set beresp.ttl = 0s;
+    set beresp.http.X-Cacheable = "NO: POST";
+    return(deliver);
+  }
 
+
+
+
+  ## Throw out the easy crap
+  ## Don't cache admin pages
+  if (req.url ~ "^/wp-(login|admin)" ||
+      req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
+      req.http.Authorization ) {
+    set beresp.ttl = 0s;
+    set beresp.http.X-Cacheable = "NO: Admin Area";
+    return (deliver);
+  }
+  
+  # Always pass (pipe) on anything in the transaction (e-commerce)
+  # folder. (Safety feature)
+  # This should never happen as we return(pipe) in vcl_rcv,
+  # But Just In Case (tm)
+  if (req.url ~ "^/transaction" ) {
+    set beresp.ttl = 0s;
+    set beresp.http.X-Cacheable = "NO: Transaction Folder";
+    return (deliver); 
+  }
+
+
+
+  ## BAN Lurker support
+  set beresp.http.x-url  = req.url;
+  set beresp.http.x-host = req.http.host;
 
   ## Setup the grace Time
   set beresp.grace = 240m;
@@ -586,72 +590,16 @@ sub vcl_fetch {
     set beresp.http.Cache-Control = "public, max-age = 3600";
     set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
     set beresp.http.X-Cacheable = "YES: Cache Primer: " + beresp.ttl;
+    return(deliver);
   }    
   
 
 
-  
-  ## BAN Lurker support
-  set beresp.http.x-url  = req.url;
-  set beresp.http.x-host = req.http.host;
 
-  unset req.http.X-DMN-OVERRIDE-CACHE-CONTROL;
-  if (req.http.cookie ~ "wordpress_logged_in") {
-    set req.http.X-DMN-LOGIN = "YES";
-  }
-  else {
-    unset req.http.X-DMN-LOGIN; # = "NO";
-  }
 
-  ## Strip out Cookies where possible
-  # Strip cookies for image files:
-  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$" ||
-      req.url ~ "(?i)\.(js|css|woff|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[a-z0-9]+)?$" ||
-      req.url ~ ".*\.(css|js)\?ver=.*" ) {
-    unset beresp.http.Set-Cookie;
-    unset beresp.http.expires;
-    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
-    unset req.http.X-DMN-LOGIN;
-  }
-  
-  ## If we're not logged in, kill the dam PHPSESSID cookie
-  if (!( req.http.X-DMN-LOGIN)) {
-    if (beresp.http.Set-Cookie) {
-      header.remove(beresp.http.Set-Cookie, "PHPSESSID");
-      set beresp.http.X-DMN-Debug-PHPSESSID = "Removed";
-      if (beresp.http.Set-Cookie ~ "^ *$") {
-        unset beresp.http.Set-Cookie;
-        set beresp.http.X-DMN-Debug-PHPSESSID = "Removed, Set-Cookie UNSET";
-      }
-    }
-  }
-  
-  # We need some sort of micro-caching on the homepage..
-  if (req.url == "/") {
-      unset beresp.http.expires;
-      set beresp.ttl = 30s;
-      set beresp.http.Cache-Control = "public, max-age = 30";
-      set beresp.http.X-DMN-Adjust-Age = "Yes";
-      set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
-      set req.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
-      #return(deliver);
-  }
-  
-  if (req.url ~ "/permalink/") {
-      unset beresp.http.expires;
-      set beresp.ttl = 30s;
-      set beresp.http.Cache-Control = "public, max-age = 30";
-      set beresp.http.X-DMN-Adjust-Age = "Yes";
-      set beresp.http.X-Cacheable = "Foced cache Story Page (" + beresp.ttl + ")";
-      set req.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
-      #return(deliver);
-  }
-  
-  
-  ## Strip out Cookies where possible
   set beresp.http.X-Cacheable = "YES: No Changes Made";
-
-
+  unset beresp.http.X-DMN-Strip-deliver;
+  
   if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$") {
     set beresp.http.X-Cacheable = "YES:Forced Image File: ";
   }
@@ -667,18 +615,20 @@ sub vcl_fetch {
       req.url ~ "(?i)\.(js|css|woff|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)\?([A-Za-z0-9]+)$") {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
-    set beresp.http.X-DMN-Adjust-Age = "Yes";
     set beresp.http.X-Cacheable = 
       beresp.http.X-Cacheable + "Tagged! (" + beresp.ttl + ")";
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
+    set beresp.http.X-DMN-Strip-deliver = "Yes";
   }
-      
+  
   # Tagged - so give it a long TTL as the tag will force refresh
   if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
     unset beresp.http.expires;
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
-    set beresp.http.X-DMN-Adjust-Age = "Yes";
     set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
+    set beresp.http.X-DMN-Strip-deliver = "Yes";
   }
 
 
@@ -688,40 +638,90 @@ sub vcl_fetch {
       req.url ~ "(?i)\.woff$") {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
-    set beresp.http.X-DMN-Adjust-Age = "Yes";
     set beresp.http.X-Cacheable = "YES:Theme Image File: " + beresp.ttl;
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
+    set beresp.http.X-DMN-Strip-deliver = "Yes";
   }
-  else {  
-    # Not Tagged - These can change more often, so give it short ttl
-    if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$" ||
-        req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
-      set beresp.ttl = 120s;
-      set beresp.http.Cache-Control = "public, max-age = 120";
-      set beresp.http.X-DMN-Adjust-Age = "Yes";
-      set beresp.http.X-Cacheable = 
-        beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
-    }
+
+
+  # Not Tagged - These can change more often, so give it short ttl
+  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$" ||
+      req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
+    set beresp.ttl = 120s;
+    set beresp.http.Cache-Control = "public, max-age = 120";
+    set beresp.http.X-Cacheable = 
+      beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
+    set beresp.http.X-DMN-Strip-deliver = "Yes";
+  }
+
+
+  if (beresp.http.X-DMN-Strip-Deliver) {
+    unset beresp.http.X-DMN-Strip-deliver;  
+    set beresp.http.X-DMN-Adjust-Age = "Yes";
+    unset beresp.http.Set-Cookie;
+    unset beresp.http.expires;
+    return(deliver);
+  }
+
+
+  ## Not a static file, so if we're logged in, its personalized
+  if (req.http.cookie ~ "wordpress_logged_in") {
+    set req.http.X-DMN-LOGIN = "YES";
+    set beresp.ttl = 0s;
+    return(deliver);
+  }
+
+
+  # Homepage isn't personalized for anonymous,
+  # And doesn't really need to set any cookies
+  if (req.url == "/") {
+    set beresp.ttl = 30s;
+    # We just want to cache it here - not sure we want browser to cache
+    #unset beresp.http.expires;
+    #set beresp.http.Cache-Control = "public, max-age = 30";
+    #set beresp.http.X-DMN-Adjust-Age = "Yes";
+    #set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
+    return(deliver);
   }
   
 
 
-  # Honour Cache Controls
-  if (!(req.http.X-DMN-OVERRIDE-CACHE-CONTROL)) {  
-    if ( beresp.http.Cache-Control ~ "no-cache" ) {
-      set beresp.ttl = 0s;
-      set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
-      return(hit_for_pass);
-    }
-    if ( beresp.http.Cache-Control ~ "private" ) {
-      set beresp.ttl = 0s;
-      set beresp.http.X-Cacheable = "NO:Cache-Control=private";
-      return(hit_for_pass);
+  ## If we're not logged in, kill the dam PHPSESSID cookie
+  if (beresp.http.Set-Cookie) {
+    header.remove(beresp.http.Set-Cookie, "PHPSESSID");
+    set beresp.http.X-DMN-Debug-PHPSESSID = "Removed";
+    if (beresp.http.Set-Cookie ~ "^ *$") {
+      unset beresp.http.Set-Cookie;
+      set beresp.http.X-DMN-Debug-PHPSESSID = "Removed, Set-Cookie UNSET";
     }
   }
 
+  
+  #if (req.url ~ "/permalink/") {
+  #    unset beresp.http.expires;
+  #    set beresp.ttl = 30s;
+  #    set beresp.http.Cache-Control = "public, max-age = 30";
+  #    set beresp.http.X-DMN-Adjust-Age = "Yes";
+  #    set beresp.http.X-Cacheable = "Foced cache Story Page (" + beresp.ttl + ")";
+  #    return(deliver);
+  #}
+  
+  
+  # Honour Cache Controls
+  if ( beresp.http.Cache-Control ~ "no-cache" ) {
+    set beresp.ttl = 0s;
+    set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
+    return(hit_for_pass);
+  }
+  if ( beresp.http.Cache-Control ~ "private" ) {
+    set beresp.ttl = 0s;
+    set beresp.http.X-Cacheable = "NO:Cache-Control=private";
+    return(hit_for_pass);
+  }
+
   # Only cache responses with no cookies
-  # and no login
-  if (beresp.http.set-cookie || req.http.X-DMN-LOGIN) {
+  if (beresp.http.set-cookie) {
     set beresp.ttl = 0s;
     set beresp.http.X-Cacheable = "NO: SET COOKIE";
     return(hit_for_pass);
