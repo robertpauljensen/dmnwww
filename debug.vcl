@@ -92,7 +92,82 @@ acl purgers {
 }
 
 
+
+
 import header;
+
+
+
+
+
+sub NormReqEncoding {
+
+  set req.http.X-DMN-Debug-Encoding-Changed = "No";
+  
+  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
+    set req.http.X-DMN-Debug-Encoding-Changed = "YES - REMOVED from compressed Media File";
+    # Already Compressed
+    unset req.http.Accept-Encoding;
+  }
+  
+  if (req.http.Accept-Encoding) {
+    if (req.http.Accept-Encoding ~ "gzip") {
+      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized GZIP";
+      set req.http.Accept-Encoding = "gzip";
+    }
+    else if (req.http.Accept-Encoding ~ "deflate") {
+      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized DEFLATE";
+      set req.http.Accept-Encoding = "deflate";
+    }
+    else {
+      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Removed UNKNOWN: " + req.http.Accept-Encoding;
+      # unknown algorithm
+      unset req.http.Accept-Encoding;
+    }
+  }
+}
+
+
+
+
+
+sub CheckRestarts {
+  ## Setup the backend...
+  ## WARNING!
+  ##   if you restart a request, it will use the MODIFIED req object
+  ##   This means, for instance, if you changed the req.url -
+  ##   you may get a DIFFERENT director on restart!!
+  ## WARNING!
+  if (req.restarts == 2) {
+    # We only have 2 backends - so everything must be down
+    # Force cached content using fail backend
+    set req.backend = fail;
+    unset req.http.Cookie;
+    unset req.http.Accept-Encoding;
+    set req.http.Accept-Language = "en-US,en;q=0";
+    set req.grace = 120m;
+    set req.http.X-DMN-Debug-Backend-Grace = "Hail Mary! (Trying emergency cache..): " + req.grace;
+  }
+  else {
+    # SAH Serve objects up to 2 hours past their expiry if the backend
+    #     is slow to respond.
+    if ( req.backend.healthy) {
+      set req.grace = 10s;
+      set req.http.X-DMN-Debug-Backend-Grace = "Default: " + req.grace;  
+    } else {
+      #unset req.http.Cookie;
+      #unset req.http.Accept-Encoding;
+      #set req.http.Accept-Language = "en-US,en;q=0";
+      set req.grace = 120m;
+      set req.http.X-DMN-Debug-Backend-Grace = "Backend NOT healthy! " + req.grace;
+    }
+  }
+}
+
+
+
+
+
 
 
 sub vcl_recv {
@@ -130,7 +205,7 @@ sub vcl_recv {
 
   
 
-  # allow PURGE from localhost and 192.168.55...
+  ## PURGE/BAN/REFRESH
   if (req.request == "PURGE") {
     if (!client.ip ~ purgers) {
       error 405 "Purge Not allowed.";
@@ -174,8 +249,12 @@ sub vcl_recv {
 
 
 
-  ## HANDLE THESE EARLY ...
-  #
+
+
+
+  ## Get all the easy stuff out of the way...
+  ## admin/login, static files, transaction dir, etc.
+  
   # If they're hitting the admin/login page or some Authenticated page
   # just pass and skip all the processing
   if (req.url ~ "^/wp-(login|admin)" ||
@@ -208,7 +287,114 @@ sub vcl_recv {
     set req.http.X-DMN-Cache-Primer = "Yes (cookies stripped)";
   }    
   
+
+
+
+
+
+  if (req.http.X-Forwarded-For) {
+    unset req.http.X-Forwarded-For;
+    set req.http.X-Forwarded-For = client.ip;
+  }
+
+
+
+
+
+  ## Simple static files
+  set req.http.X-DMN-Debug-Cookies-Unset = "No";
   
+  # uploaded images, etc.
+  if (req.url ~ "^/wp-content/uploads" || req.http.X-DMN-Use-Uploads ) {
+    call NormReqEncoding 
+    unset req.http.Cookie;
+    set req.http.X-DMN-Use-Uploads = "Yes";  
+    set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
+    set req.http.X-DMN-Debug-Backend-Director = 
+       "uploads (strips cookies): " + req.url;
+    set req.http.X-DMN-Use-Uploads = "Yes";  
+    set req.backend = uploads;
+    call CheckRestarts;
+    return(lookup);
+  }
+
+  # Any other static files
+  if (req.url ~ "\.(css|js|jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|txt|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$" ||
+      req.url ~ "\.(css|js)\?ver=.*$" ) {
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
+    unset req.http.Cookie;
+    call NormReqEncoding 
+    set req.http.X-DMN-Debug-Backend-Director = "www";
+    set req.backend = www;
+    call CheckRestarts;
+    return(lookup);
+  }
+
+  # SAH - Normalize all the RSS crap
+  if (req.url ~ "(?i)^/rss$" || 
+      req.url ~ "(?i)^/rss.xml$" ||
+      req.url ~ "(?i)^/stories/rss$" ||
+      req.url ~ "(?i)^/stories/rss.xml$"  ||
+      req.url ~ "(?i)^/stories\?func=viewRss" ||
+      req.url ~ "(?i)^/blog/rss"              ||
+      req.url ~ "(?i)^/top-stories/rss$"  ||
+      req.url ~ "(?i)^/top-stories/rss.xml$" ||
+      req.url == "/\?feed=rss" ) {
+    set req.url = "/?feed=rss";
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - RSS Feed";
+    unset req.http.Cookie;
+    call NormReqEncoding 
+    set req.http.X-DMN-Debug-Backend-Director = "www";
+    set req.backend = www;
+    call CheckRestarts;
+    return(lookup);
+  }	
+
+  if (req.url ~ "(?i)^/stories\?func=viewAtom" ||
+      req.url == "/\?feed=atom" ) {
+    set req.url ="/?feed=atom";
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Atom Feed";
+    unset req.http.Cookie;
+    call NormReqEncoding 
+    set req.http.X-DMN-Debug-Backend-Director = "www";
+    set req.backend = www;
+    call CheckRestarts;
+    return(lookup);
+  }
+
+  # At this point, if they're logged in,
+  # They're getting a personalized page - so pass
+  if (req.http.cookie ~ "wordpress_logged_in") {
+    set req.http.X-DMN-LOGGED-IN = "YES";  
+    set req.http.X-DMN-Debug-Cookies-Unset = "NO - Logged In";
+    set req.http.X-DMN-Debug-Backend-Director = "www";
+    set req.backend = www;
+    call CheckRestarts;
+    return(pass);
+  }
+
+
+
+  ## Finally, for users that are NOT logged in,
+  ## Can we jigger it around to serve them cached content?
+  ##
+  
+  ## Front page is easy - its the same for all anonymous visitors
+  if (req.url == "/") {
+    unset req.http.cookie;
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Front Door, NOT logged in";
+    set req.http.X-DMN-Debug-Backend-Director = "www";
+    set req.backend = www;
+    call CheckRestarts;
+    return(lookup);
+  }
+
+  ## TODO: Once the javascript for comment nickname population gets
+  ##       moved into production, we can basically unset req.http.Cookie !!
+  ##       for anonymous users, the cookies only hold comment_* 
+  ##       and preference settings.
+  
+  ## For now, see if we can fudge it..
   ## Strip Cookies
   ## TODO: PHPSESSID is the social login plugin. 
   ## It doesn't seem to require it unless your logging in (see above)
@@ -230,176 +416,19 @@ sub vcl_recv {
     unset req.http.Cookie;
   }
   
-  ## NORMALIZE everything
-  ##  Forwarded-For
-  ##  Encoding
-  ##  URLs
-  
-  if (req.http.X-Forwarded-For) {
-    unset req.http.X-Forwarded-For;
-    set req.http.X-Forwarded-For = client.ip;
-  }
 
-  ## Normalize Encoding
-  ## Not sure this is needed for modern browsers ?
-  set req.http.X-DMN-Debug-Encoding-Changed = "No";
-  
-  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
-    set req.http.X-DMN-Debug-Encoding-Changed = "YES - REMOVED from compressed Media File";
-    # Already Compressed
-    unset req.http.Accept-Encoding;
-  }
-  
-  if (req.http.Accept-Encoding) {
-    if (req.http.Accept-Encoding ~ "gzip") {
-      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized GZIP";
-      set req.http.Accept-Encoding = "gzip";
-    }
-    else if (req.http.Accept-Encoding ~ "deflate") {
-      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized DEFLATE";
-      set req.http.Accept-Encoding = "deflate";
-    }
-    else {
-      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Removed UNKNOWN: " + req.http.Accept-Encoding;
-      # unknown algorithm
-      unset req.http.Accept-Encoding;
-    }
-  }
-
-  
-  ## Normalize URL's
-
-  # uploaded images, etc.
-  if (req.url ~ "^/wp-content/uploads") {
-      #unset req.http.Cookie;
-      set req.http.X-DMN-Use-Uploads = "Yes";  
-      set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
-      #set req.http.X-DMN-Debug-Backend-Director = 
-      #  "uploads : " + req.url;
-      #  # "uploads (strips cookies): " + req.url;
-  }
-  
-  # SAH - Normalize all the RSS crap
-  if (req.url ~ "(?i)^/rss$" || 
-      req.url ~ "(?i)^/rss.xml$" ||
-      req.url ~ "(?i)^/stories/rss$" ||
-      req.url ~ "(?i)^/stories/rss.xml$"  ||
-      req.url ~ "(?i)^/stories\?func=viewRss" ||
-      req.url ~ "(?i)^/blog/rss"              ||
-      req.url ~ "(?i)^/top-stories/rss$"  ||
-      req.url ~ "(?i)^/top-stories/rss.xml$" ) {
-        set req.url = "/?feed=rss";
-  }	
-
-  if (req.url ~ "(?i)^/stories\?func=viewAtom") {
-    set req.url ="/?feed=atom";
-  }
-  
-
-
-  ## Strip Cookies if possible
-
-  
-  ## Simple static files
-  set req.http.X-DMN-Debug-Cookies-Unset = "No";
-  
-  # We need some sort of micro-caching on the homepage..
-  # But we can't do that for logged in users.
-  if (req.http.cookie ~ "wordpress_logged_in") {
-    set req.http.X-DMN-LOGGED-IN = "YES";  
-  }
-  else {
-    unset req.http.X-DMN-LOGGED-IN;
-  }
-  
-  if (req.url == "/") {
-    if (!(req.http.cookie ~ "wordpress_logged_in")) {
-      unset req.http.cookie;
-      set req.http.X-DMN-Debug-Cookies-Unset = "YES - Front Door, NOT logged in";
-    }
-  }
-  
-  
-  if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
-    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
-    unset req.http.Cookie;
-  }
-  
-  ##
-  # Strip RSS/Atom feeds ?
-  #if (req.url ~ "\.(css|js|txt|rss|atom)$") {
-  if (req.url ~ "\.(css|js|txt)$") {
-    set req.http.X-DMN-Debug-Cookies-Unset = "YES - css/js File";
-    unset req.http.Cookie;
-  }
-  # Keep the version so we correctly catch updates, but drop cookies
-  if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
-    set req.http.X-DMN-Debug-Cookies-Unset = "YES - VERSIONED css/js File";
-    unset req.http.Cookie;
-  }
-
-
-
-  ## Setup the backend...
-  ## WARNING!
-  ##   if you restart a request, it will use the MODIFIED req object
-  ##   This means, for instance, if you changed the req.url -
-  ##   you may get a DIFFERENT director on restart!!
-  ## WARNING!
-  if (req.restarts == 2) {
-    # We only have 2 backends - so everything must be down
-    # Force cached content using fail backend
-    set req.backend = fail;
-    unset req.http.Cookie;
-    unset req.http.Accept-Encoding;
-    set req.http.Accept-Language = "en-US,en;q=0";
-    set req.grace = 120m;
-    set req.http.X-DMN-Debug-Backend-Grace = "Hail Mary! (Trying emergency cache..): " + req.grace;
-  }
-  else {
-    if (req.http.X-DMN-Use-Uploads) {
-      #unset req.http.Cookie;
-      set req.http.X-DMN-Debug-Backend-Director = 
-        "uploads: " + req.url;
-        # "uploads (strips cookies): " + req.url;
-      #set req.http.X-DMN-Use-Uploads = "Yes";  
-      set req.backend = uploads;  
-    } else {
-      set req.http.X-DMN-Debug-Backend-Director = "www";
-      set req.backend = www;
-    }
-  }
-
-  # SAH Serve objects up to 2 hours past their expiry if the backend
-  #     is slow to respond.
-  if ( req.backend.healthy) {
-    set req.grace = 10s;
-    set req.http.X-DMN-Debug-Backend-Grace = "Default: " + req.grace;  
-  } else {
-    #unset req.http.Cookie;
-    #unset req.http.Accept-Encoding;
-    set req.http.Accept-Language = "en-US,en;q=0";
-    set req.grace = 120m;
-    set req.http.X-DMN-Debug-Backend-Grace = "Backend NOT healthy! " + req.grace;
-  }
-
-
-#  if ( req.http.X-DMN-LOGGED-IN ) {
-#    set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
-#    return( pass);
-#  } else {
-#    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
-#    return(lookup);
-#  }
-  
-  if ( req.http.Cookie ) {
+  ## If we have commenter cookies leftover, we're screwed..
+  if ( req.http.Cookie ~ "comment_author" ) {
     set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
     return( pass );
   } else {
     set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return( lookup);
   }
-  
+
+
+
+
 
 
 
