@@ -110,10 +110,7 @@ sub vcl_recv {
 
 
   set req.http.X-DMN-Debug = "Please";
-
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath = "vcl_recv";  
-  }
+  set req.http.X-DMN-Debug-Callpath = "vcl_recv";  
 
   #if (req.http.X-DMN-Debug) {
   #  set req.http.X-Debug-Orig-Request = req.request;
@@ -178,54 +175,51 @@ sub vcl_recv {
 
 
   ## HANDLE THESE EARLY ...
+  #
+  # If they're hitting the admin/login page or some Authenticated page
+  # just pass and skip all the processing
+  if (req.url ~ "^/wp-(login|admin)" || req.http.Authorization ) {
+    return (pass);
+  }
+  
   # Always pass (pipe) on anything in the transaction (e-commerce)
   # folder. (Safety Feature)
   if (req.url ~ "^/transaction" ) { 
     return (pipe); 
   }
   
+  # Throw out some easy crap early
   if (req.url ~ "(?i)p=discount-ugg" ) {
-    error 404 "Not Found";
+    error 777 "Oops";
   }
-  
+  if (req.url ~ "(?i)class=WebGUI::Asset" ) {
+    error 777 "Oops";
+  }
+
+
   ## This is our cache primer - strip cookies, and miss
-  if (req.http.User-Agent == "DMN Cache Primer" &&
-      req.http.X-DMN-Cache-Primer == "Yes") {
-    if (req.http.X-DMN-Debug) {
-      set req.http.X-DMN-Cache-Primer = "Yes (cookies stripped)";
-    }
+  if (req.http.User-Agent == "DMN Cache Primer" && req.http.X-DMN-Cache-Primer == "Yes") {
     unset req.http.Cookie;
     unset req.http.Accept-Encoding;
     set req.http.Accept-Language = "en-US,en;q=0";
     set req.hash_always_miss = true;
+    set req.http.X-DMN-Cache-Primer = "Yes (cookies stripped)";
   }    
   
   
   ## Strip Cookies
-  ##
-  ##wp-settings-43=libraryContent%3Dbrowse%26editor%3Dhtml;
-  ##wp-settings-time-43=1392979754;
-  ##comment_author_5d38c4e41e44de264c207c20ef393a9a=test;
-  ##comment_author_email_5d38c4e41e44de264c207c20ef393a9a=nunyabizness%40example.com;
-  ##PHPSESSID=fni3n9n509tbf6k3v479jse0d4;
-  ##__auc=4af57355144325b1e53b00ac0bc;
-  ##__utma=97216394.1162005118.1392414237.1393362180.1393378581.52;
-  ##__utmc=97216394;
-  ##__utmz=97216394.1392414237.1.1.utmcsr=(direct)|utmccn=(direct)|utmcmd=(none)
+  ## TODO: Figure out whats setting this PHP Session
+  ## PHPSESSID=fni3n9n509tbf6k3v479jse0d4;
   ##
   ## Strip Google cookies
   if (req.http.Cookie) {
-    #set req.http.Cookie = 
-      # removes all cookies named __utm? (utma, utmb...) and __auc
-      #regsuball(req.http.Cookie, "(^|; ) *__utm.=[^;]+;? *", "\1");
-      #regsuball(req.http.Cookie, "(^|; ) *__auc=[^;]+;? *", "\1");
     set req.http.Cookie = ";" + req.http.Cookie;
     set req.http.Cookie = regsuball(req.http.Cookie, "; +", ";");
     set req.http.Cookie = regsuball(req.http.Cookie, ";(wp[_-][^=]+|wordpress[_-][^=]+|comment[^=]+)=", "; \1=");
     set req.http.Cookie = regsuball(req.http.Cookie, ";[^ ][^;]*", "");
     set req.http.Cookie = regsuball(req.http.Cookie, "^[; ]+|[; ]+$", "");
 
-    set req.http.X-DMN-Debug-Post-GA-Cookies = req.http.Cookie;
+    set req.http.X-DMN-Debug-Cooked-Cookies = req.http.Cookie;
   }
   
   
@@ -241,38 +235,25 @@ sub vcl_recv {
 
   ## Normalize Encoding
   ## Not sure this is needed for modern browsers ?
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Encoding-Changed = "No";
-  }
+  set req.http.X-DMN-Debug-Encoding-Changed = "No";
   
   if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
-    if (req.http.X-DMN-Debug) {
-      set req.http.X-DMN-Debug-Encoding-Changed = 
-        "YES - REMOVED from compressed Media File";
-    }  
+    set req.http.X-DMN-Debug-Encoding-Changed = "YES - REMOVED from compressed Media File";
     # Already Compressed
     unset req.http.Accept-Encoding;
   }
   
   if (req.http.Accept-Encoding) {
     if (req.http.Accept-Encoding ~ "gzip") {
-      if (req.http.X-DMN-Debug) {
-        set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized GZIP";
-      }  
+      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized GZIP";
       set req.http.Accept-Encoding = "gzip";
     }
     else if (req.http.Accept-Encoding ~ "deflate") {
-      if (req.http.X-DMN-Debug) {
-        set req.http.X-DMN-Debug-Encoding-Changed = 
-	   "YES - Normalized DEFLATE";
-      }  
+      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Normalized DEFLATE";
       set req.http.Accept-Encoding = "deflate";
     }
     else {
-      if (req.http.X-DMN-Debug) {
-        set req.http.X-DMN-Debug-Encoding-Changed = 
-	   "YES - Removed UNKNOWN: " + req.http.Accept-Encoding;
-      }  
+      set req.http.X-DMN-Debug-Encoding-Changed = "YES - Removed UNKNOWN: " + req.http.Accept-Encoding;
       # unknown algorithm
       unset req.http.Accept-Encoding;
     }
@@ -280,6 +261,16 @@ sub vcl_recv {
 
   
   ## Normalize URL's
+
+  # uploaded images, etc.
+  if (req.url ~ "^/wp-content/uploads") {
+      #unset req.http.Cookie;
+      set req.http.X-DMN-Use-Uploads = "Yes";  
+      set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
+      #set req.http.X-DMN-Debug-Backend-Director = 
+      #  "uploads : " + req.url;
+      #  # "uploads (strips cookies): " + req.url;
+  }
   
   # SAH - Normalize all the RSS crap
   if (req.url ~ "(?i)^/rss$" || 
@@ -293,18 +284,6 @@ sub vcl_recv {
         set req.url = "/?feed=rss";
   }	
 
-  #if (req.url ~ "^/RSS$" || req.url ~ "^/rss$" ||
-  #    req.url ~ "^/RSS.xml$"             || req.url ~ "^/rss.xml$" ||
-  #    req.url ~ "^/RSS.XML$"             || req.url ~ "^/rss.XML$" ||
-  #    req.url ~ "^/stories/RSS$"         || req.url ~ "^/stories/rss$" ||
-  #    req.url ~ "^/stories\?func=viewRss" ||
-  #    req.url ~ "^/blog/RSS"              ||
-  #    req.url ~ "^/stories/RSS.xml$"     || req.url ~ "^/stories/rss.xml$" ||
-  #    req.url ~ "^/top-stories/RSS$"     || req.url ~ "^/top-stories/rss$" ||
-  #    req.url ~ "^/top-stories/RSS.xml$" || req.url ~ "^/top-stories/rss.xml$" ) {
-  #      set req.url = "/?feed=rss";
-  #}	
-  
   if (req.url ~ "(?i)^/stories\?func=viewAtom") {
     set req.url ="/?feed=atom";
   }
@@ -315,26 +294,20 @@ sub vcl_recv {
 
   
   ## Simple static files
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Cookies-Unset = "No";
-  }
+  set req.http.X-DMN-Debug-Cookies-Unset = "No";
   
   # We need some sort of micro-caching on the homepage..
   # But we can't do that for logged in users.
   if (req.url == "/") {
     if (!(req.http.cookie ~ "wordpress_logged_in")) {
       unset req.http.cookie;
-      if (req.http.X-DMN-Debug) {
-        set req.http.X-DMN-Debug-Cookies-Unset = "YES - Front Door, NOT logged in";
-      }  
+      set req.http.X-DMN-Debug-Cookies-Unset = "YES - Front Door, NOT logged in";
     }
   }
   
   
   if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$") {
-    if (req.http.X-DMN-Debug) {
-      set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
-    }  
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
     unset req.http.Cookie;
   }
   
@@ -342,16 +315,12 @@ sub vcl_recv {
   # Strip RSS/Atom feeds ?
   #if (req.url ~ "\.(css|js|txt|rss|atom)$") {
   if (req.url ~ "\.(css|js|txt)$") {
-    if (req.http.X-DMN-Debug) {
-      set req.http.X-DMN-Debug-Cookies-Unset = "YES - css/js File";
-    }  
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - css/js File";
     unset req.http.Cookie;
   }
   # Keep the version so we correctly catch updates, but drop cookies
   if (req.url ~ ".*\.(css|js)\?ver=.*" ) {
-    if (req.http.X-DMN-Debug) {
-      set req.http.X-DMN-Debug-Cookies-Unset = "YES - VERSIONED css/js File";
-    }  
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - VERSIONED css/js File";
     unset req.http.Cookie;
   }
 
@@ -367,15 +336,19 @@ sub vcl_recv {
     # We only have 2 backends - so everything must be down
     # Force cached content using fail backend
     set req.backend = fail;
+    unset req.http.Cookie;
+    unset req.http.Accept-Encoding;
+    set req.http.Accept-Language = "en-US,en;q=0";
+    set req.grace = 120m;
+    set req.http.X-DMN-Debug-Backend-Grace = "Hail Mary! (Trying emergency cache..): " + req.grace;
   }
   else {
-    if (req.http.X-DMN-Use-Uploads || 
-         (req.url ~ "^/wp-content/uploads" && req.request == "GET" )) {
-      unset req.http.Cookie;
-      set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
+    if (req.http.X-DMN-Use-Uploads) {
+      #unset req.http.Cookie;
       set req.http.X-DMN-Debug-Backend-Director = 
-        "uploads (strips cookies): " + req.url;
-      set req.http.X-DMN-Use-Uploads = "Yes";  
+        "uploads: " + req.url;
+        # "uploads (strips cookies): " + req.url;
+      #set req.http.X-DMN-Use-Uploads = "Yes";  
       set req.backend = uploads;  
     } else {
       set req.http.X-DMN-Debug-Backend-Director = "www";
@@ -389,8 +362,8 @@ sub vcl_recv {
     set req.grace = 10s;
     set req.http.X-DMN-Debug-Backend-Grace = "Default: " + req.grace;  
   } else {
-    unset req.http.Cookie;
-    unset req.http.Accept-Encoding;
+    #unset req.http.Cookie;
+    #unset req.http.Accept-Encoding;
     set req.http.Accept-Language = "en-US,en;q=0";
     set req.grace = 120m;
     set req.http.X-DMN-Debug-Backend-Grace = "Backend NOT healthy! " + req.grace;
@@ -398,14 +371,10 @@ sub vcl_recv {
 
 
   if ( req.http.Cookie ) {
-    if (req.http.X-DMN-Debug) {
-      set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
-    }  
+    set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
     return( pass );
   } else {
-    if (req.http.X-DMN-Debug) {
-      set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
-    }  
+    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return( lookup);
   }
   
@@ -460,10 +429,8 @@ sub vcl_fetch {
   ## Unset cookies if possible
   ## Set TTL if needed
 
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_fetch";
-  }  
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_fetch";
   
 
     
@@ -476,21 +443,18 @@ sub vcl_fetch {
   ##   This means, for instance, a different director can be selected if
   ##   you've modified the req.url!
   ##
-  if (req.http.X-DMN-Debug) {
-    if (req.http.X-DMN-Debug-Backend-Chain) {
-      set req.http.X-DMN-Debug-Backend-Chain = 
-        req.http.X-DMN-Debug-Backend-Chain + ":" + beresp.backend.name;  
-    } else {
-      set req.http.X-DMN-Debug-Backend-Chain = beresp.backend.name;  
-    }
+  if (req.http.X-DMN-Debug-Backend-Chain) {
+    set req.http.X-DMN-Debug-Backend-Chain = 
+      req.http.X-DMN-Debug-Backend-Chain + ":" + beresp.backend.name;  
+  } else {
+    set req.http.X-DMN-Debug-Backend-Chain = beresp.backend.name;  
   }
 
-  if (beresp.status == 404) {
-    if (req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
-      if (req.restarts == 0) {
-        set beresp.saintmode = 3s;
-        return(restart);
-      }
+  if (beresp.status == 404 &&
+      req.url ~ "\.(jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|wav|bmp|rtf|flv|swf)$") {
+    if (req.restarts == 0) {
+      set beresp.saintmode = 3s;
+      return(restart);
     }
   }
   
@@ -519,10 +483,8 @@ sub vcl_fetch {
     unset beresp.http.Vary;
     set beresp.ttl = 3600s;
     set beresp.http.Cache-Control = "public, max-age = 3600";
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
-      set beresp.http.X-Cacheable = "YES: Cache Primer: " + beresp.ttl;
-    }  
+    set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
+    set beresp.http.X-Cacheable = "YES: Cache Primer: " + beresp.ttl;
   }    
   
 
@@ -537,9 +499,7 @@ sub vcl_fetch {
   # folder. (Safety feature)
   if (req.url ~ "^/transaction" ) {
     set beresp.ttl = 0s;
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "NO: Transaction Folder";
-    }  
+    set beresp.http.X-Cacheable = "NO: Transaction Folder";
     return (hit_for_pass); 
   }
 
@@ -552,9 +512,7 @@ sub vcl_fetch {
       set beresp.ttl = 30s;
       set beresp.http.Cache-Control = "public, max-age = 30";
       set beresp.http.X-DMN-Adjust-Age = "Yes";
-      if (req.http.X-DMN-Debug) {
-        set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
-      }  
+      set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
     }
     return(deliver);
   }
@@ -565,17 +523,13 @@ sub vcl_fetch {
   # Honour Cache Controls
   if ( beresp.http.Cache-Control ~ "no-cache" ) {
     set beresp.ttl = 0s;
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
-    }  
+    set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
     return(hit_for_pass);
   }
 
   if ( beresp.http.Cache-Control ~ "private" ) {
     set beresp.ttl = 0s;
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "NO:Cache-Control=private";
-    }  
+    set beresp.http.X-Cacheable = "NO:Cache-Control=private";
     return(hit_for_pass);
   }
 
@@ -587,30 +541,24 @@ sub vcl_fetch {
   if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$") {
     unset beresp.http.set-cookie;
     unset beresp.http.expires;
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "YES:Forced Image File: ";
-    }  
+    set beresp.http.X-Cacheable = "YES:Forced Image File: ";
   }
   
   # Strip cookies for static files:
-  if (req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[a-z0-9]+)?$") {
+  if (req.url ~ "(?i)\.(js|css|woff|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)(\?[a-z0-9]+)?$") {
     unset beresp.http.set-cookie;
     unset beresp.http.expires;
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "YES:Forced Static File: ";
-    }  
+    set beresp.http.X-Cacheable = "YES:Forced Static File: ";
   }
 
   # Tagged - so give it a long TTL as the tag will force refresh
   if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)\?([A-Za-z0-9]+)$" ||
-      req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)\?([A-Za-z0-9]+)$") {
+      req.url ~ "(?i)\.(js|css|woff|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)\?([A-Za-z0-9]+)$") {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
     set beresp.http.X-DMN-Adjust-Age = "Yes";
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = 
-        beresp.http.X-Cacheable + "Tagged! (" + beresp.ttl + ")";
-    }  
+    set beresp.http.X-Cacheable = 
+      beresp.http.X-Cacheable + "Tagged! (" + beresp.ttl + ")";
   }
       
   # Tagged - so give it a long TTL as the tag will force refresh
@@ -620,20 +568,18 @@ sub vcl_fetch {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
     set beresp.http.X-DMN-Adjust-Age = "Yes";
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
-    }  
+    set beresp.http.X-Cacheable = "YES:Forced VERSIONED css/js File: " + beresp.ttl;
   }
 
 
   # If its a DMN theme image, cache it for longer..
-  if (req.url ~ "(?i)DMN2013/img/.*\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$" ) {
+  # force woff files as we only have 1 font and it never changes
+  if (req.url ~ "(?i)DMN2013/img/.*\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$" ||
+      req.url ~ "(?i)\.woff$") {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
     set beresp.http.X-DMN-Adjust-Age = "Yes";
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "YES:Theme Image File: " + beresp.ttl;
-    }
+    set beresp.http.X-Cacheable = "YES:Theme Image File: " + beresp.ttl;
   }
   else {  
     # Not Tagged - These can change more often, so give it short ttl
@@ -642,10 +588,8 @@ sub vcl_fetch {
       set beresp.ttl = 120s;
       set beresp.http.Cache-Control = "public, max-age = 120";
       set beresp.http.X-DMN-Adjust-Age = "Yes";
-      if (req.http.X-DMN-Debug) {
-        set beresp.http.X-Cacheable = 
-          beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
-      }  
+      set beresp.http.X-Cacheable = 
+        beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
     }
   }
   
@@ -653,18 +597,14 @@ sub vcl_fetch {
   # Only cache responses with no cookies
   if (beresp.http.set-cookie) {
     set beresp.ttl = 0s;
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "NO: SET COOKIE";
-    }  
+    set beresp.http.X-Cacheable = "NO: SET COOKIE";
     return(hit_for_pass);
   }
 
 
   # Varnish determined the object was not cacheable
   if ( beresp.ttl <= 0s ) {
-    if (req.http.X-DMN-Debug) {
-      set beresp.http.X-Cacheable = "NO: Not Cacheable (Unknown Reason)";
-    }  
+    set beresp.http.X-Cacheable = "NO: Not Cacheable (Unknown Reason)";
   }
 
 
@@ -746,10 +686,8 @@ sub vcl_fetch {
 
 sub vcl_deliver {
 
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
+  set req.http.X-DMN-Debug-Callpath =
       req.http.X-DMN-Debug-Callpath + ", vcl_deliver";
-  }  
   
   if (resp.http.X-DMN-Adjust-Age) {
     #unset resp.http.X-DMN-Adjust-Age;
@@ -768,8 +706,8 @@ sub vcl_deliver {
     if ( req.http.X-DMN-Use-Uploads ) {
       set resp.http.X-DMN-Use-Uploads = req.http.X-DMN-Use-Uploads;
     }
-    #if ( req.http.X-DMN-Debug-Post-GA-Cookies ) {
-    #  set resp.http.X-DMN-Debug-Post-GA-Cookies = req.http.X-DMN-Debug-Post-GA-Cookies;
+    #if ( req.http.X-DMN-Debug-Cooked-Cookies ) {
+    #  set resp.http.X-DMN-Debug-Cooked-Cookies = req.http.X-DMN-Debug-Cooked-Cookies;
     #}
     
     set resp.http.X-DMN-Debug-Backend-Director =
@@ -826,10 +764,10 @@ sub vcl_deliver {
 
 sub vcl_error {
 
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_error";
-  }
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_error";
+  
+  # error 777 ugg boots and webgui spammers..
   
   # We only have 2 backends...more restarts would be silly
   if ((req.restarts < 3) && ((obj.status == 502 || obj.status == 503))) {
@@ -842,10 +780,8 @@ sub vcl_error {
 
 sub vcl_hash {
 
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_hash";
-  }    
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_hash";
 }
 
 
@@ -853,10 +789,8 @@ sub vcl_hash {
 
 
 sub vcl_hit {
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_hit";
-  }  
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_hit";
   
   if (req.request == "PURGE") {
     purge;
@@ -869,10 +803,8 @@ sub vcl_hit {
 
 
 sub vcl_miss {
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_miss";
-  }  
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_miss";
   
   if (req.request == "PURGE") {
     purge;
@@ -887,10 +819,8 @@ sub vcl_miss {
 
 
 sub vcl_pass {
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_pass";
-  }  
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_pass";
   
   set req.http.X-PASSED = "Yep";
 }
@@ -907,11 +837,8 @@ sub vcl_pipe {
   # here.  It is not set by default as it might break some broken web
   # applications, like IIS with NTLM authentication.
 
-  if (req.http.X-DMN-Debug) {
-    set req.http.X-DMN-Debug-Callpath =
+  set req.http.X-DMN-Debug-Callpath =
       req.http.X-DMN-Debug-Callpath + ", vcl_pipe";
-  }  
-  
 
   set bereq.http.connection = "close";
   set req.http.connection = "close";
