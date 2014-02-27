@@ -306,7 +306,7 @@ sub vcl_recv {
   
   # uploaded images, etc.
   if (req.url ~ "^/wp-content/uploads" || req.http.X-DMN-Use-Uploads ) {
-    call NormReqEncoding 
+    call NormReqEncoding;
     unset req.http.Cookie;
     set req.http.X-DMN-Use-Uploads = "Yes";  
     set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
@@ -315,6 +315,7 @@ sub vcl_recv {
     set req.http.X-DMN-Use-Uploads = "Yes";  
     set req.backend = uploads;
     call CheckRestarts;
+    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return(lookup);
   }
 
@@ -323,10 +324,11 @@ sub vcl_recv {
       req.url ~ "\.(css|js)\?ver=.*$" ) {
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
     unset req.http.Cookie;
-    call NormReqEncoding 
+    call NormReqEncoding; 
     set req.http.X-DMN-Debug-Backend-Director = "www";
     set req.backend = www;
     call CheckRestarts;
+    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return(lookup);
   }
 
@@ -343,10 +345,11 @@ sub vcl_recv {
     set req.url = "/?feed=rss";
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - RSS Feed";
     unset req.http.Cookie;
-    call NormReqEncoding 
+    call NormReqEncoding; 
     set req.http.X-DMN-Debug-Backend-Director = "www";
     set req.backend = www;
     call CheckRestarts;
+    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return(lookup);
   }	
 
@@ -355,10 +358,11 @@ sub vcl_recv {
     set req.url ="/?feed=atom";
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - Atom Feed";
     unset req.http.Cookie;
-    call NormReqEncoding 
+    call NormReqEncoding; 
     set req.http.X-DMN-Debug-Backend-Director = "www";
     set req.backend = www;
     call CheckRestarts;
+    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return(lookup);
   }
 
@@ -370,6 +374,7 @@ sub vcl_recv {
     set req.http.X-DMN-Debug-Backend-Director = "www";
     set req.backend = www;
     call CheckRestarts;
+    set req.http.X-DMN-Debug-Recv-Returned = "Pass!";
     return(pass);
   }
 
@@ -386,6 +391,7 @@ sub vcl_recv {
     set req.http.X-DMN-Debug-Backend-Director = "www";
     set req.backend = www;
     call CheckRestarts;
+    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return(lookup);
   }
 
