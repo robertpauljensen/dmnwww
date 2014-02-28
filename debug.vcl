@@ -268,7 +268,7 @@ sub vcl_recv {
   if (req.url ~ "^/transaction" ) { 
     return (pipe); 
   }
-  
+
   # Throw out some easy crap early
   if (req.url ~ "(?i)p=discount-ugg" ) {
     error 777 "Oops";
@@ -416,6 +416,8 @@ sub vcl_recv {
     set req.http.Cookie = regsuball(req.http.Cookie, ";[^ ][^;]*", "");
     set req.http.Cookie = regsuball(req.http.Cookie, "^[; ]+|[; ]+$", "");
 
+    # Ok - js is in for loading comment_author_name - get rid of these
+    set req.http.Cookie = regsuball(req.http.Cookie, "(^|;) *comment_author[^;]+;? *", "\1");
     set req.http.X-DMN-Debug-Cooked-Cookies = req.http.Cookie;
   }
   
@@ -633,6 +635,16 @@ sub vcl_fetch {
     set beresp.http.X-DMN-Strip-deliver = "Yes";
   }
 
+  # Not Tagged - These can change more often, so give it short ttl
+  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$" ||
+      req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
+    set beresp.ttl = 120s;
+    set beresp.http.Cache-Control = "public, max-age = 120";
+    set beresp.http.X-Cacheable = 
+      beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
+    set beresp.http.X-DMN-Strip-deliver = "Yes";
+  }
 
   # If its a DMN theme image, cache it for longer..
   # force woff files as we only have 1 font and it never changes
@@ -645,17 +657,6 @@ sub vcl_fetch {
     set beresp.http.X-DMN-Strip-deliver = "Yes";
   }
 
-
-  # Not Tagged - These can change more often, so give it short ttl
-  if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$" ||
-      req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
-    set beresp.ttl = 120s;
-    set beresp.http.Cache-Control = "public, max-age = 120";
-    set beresp.http.X-Cacheable = 
-      beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
-    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
-    set beresp.http.X-DMN-Strip-deliver = "Yes";
-  }
 
 
   if (beresp.http.X-DMN-Strip-Deliver) {
@@ -685,12 +686,14 @@ sub vcl_fetch {
     }
   }
 
+
+  unset beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL;
   
   # Homepage isn't personalized for anonymous,
   # And doesn't really need to set any cookies
   if (req.url == "/") {
     if (!(beresp.http.Set-Cookie)) {
-      set beresp.ttl = 30s;
+      set beresp.ttl = 300s;
       set beresp.http.X-Cacheable-1 = "YES: Forced cache Front Door (" + beresp.ttl + ")";
     } else {
       set beresp.http.X-Cacheable-1 = "NO: Front Door with COOKIES";
@@ -698,9 +701,28 @@ sub vcl_fetch {
     # We just want to cache it here - not sure we want browser to cache
     #unset beresp.http.expires;
     #set beresp.http.Cache-Control = "public, max-age = 30";
+    #set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
+    #return(deliver);
+    set beresp.http.X-DMN-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
+  }
+
+  # Allow Story pages to set cookies if needed, otherwise cache them
+  if (req.url ~ "/permalink/") {
+    if (!(beresp.http.Set-Cookie)) {
+      set beresp.ttl = 120s;
+      set beresp.http.X-DMN-Debug-Cacheable-1 = "YES: Forced Story Page (" + beresp.ttl + ")";
+    } else {
+      set beresp.http.X-DMN-Debug-Cacheable-1 = "NO: Story Page with COOKIES";
+    }
+    # We just want to cache it here - not sure we want browser to cache
+    #unset beresp.http.expires;
+    #set beresp.http.Cache-Control = "public, max-age = 30";
     #set beresp.http.X-DMN-Adjust-Age = "Yes";
     #set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
     #return(deliver);
+    set beresp.http.X-DMN-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
   }
   
 
@@ -716,15 +738,17 @@ sub vcl_fetch {
   
   
   # Honour Cache Controls
-  if ( beresp.http.Cache-Control ~ "no-cache" ) {
-    set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
-    return(hit_for_pass);
-  }
-  if ( beresp.http.Cache-Control ~ "private" ) {
-    set beresp.ttl = 0s;
-    set beresp.http.X-Cacheable = "NO:Cache-Control=private";
-    return(hit_for_pass);
+  if ( !(beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL)) {
+    if ( beresp.http.Cache-Control ~ "no-cache" ) {
+      set beresp.ttl = 0s;
+      set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
+      return(hit_for_pass);
+    }
+    if ( beresp.http.Cache-Control ~ "private" ) {
+      set beresp.ttl = 0s;
+      set beresp.http.X-Cacheable = "NO:Cache-Control=private";
+      return(hit_for_pass);
+    }
   }
 
   # Only cache responses with no cookies
