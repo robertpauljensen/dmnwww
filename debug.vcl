@@ -260,7 +260,7 @@ sub vcl_recv {
   if (req.url ~ "^/wp-(login|admin)" ||
       req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
       req.http.Authorization ) {
-    return (pass);
+    return (pipe);
   }
   
   # Always pass (pipe) on anything in the transaction (e-commerce)
@@ -306,8 +306,9 @@ sub vcl_recv {
   
   # uploaded images, etc.
   if (req.url ~ "^/wp-content/uploads" || req.http.X-DMN-Use-Uploads ) {
-    call NormReqEncoding;
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Uploads File";
     unset req.http.Cookie;
+    call NormReqEncoding;
     set req.http.X-DMN-Use-Uploads = "Yes";  
     set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
     set req.http.X-DMN-Debug-Backend-Director = 
@@ -550,6 +551,9 @@ sub vcl_fetch {
 
 
   ## Throw out the easy crap
+  
+  # These should never happen as we return(pipe) in vcl_rcv,
+  # But Just In Case (tm)
   ## Don't cache admin pages
   if (req.url ~ "^/wp-(login|admin)" ||
       req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
@@ -561,8 +565,6 @@ sub vcl_fetch {
   
   # Always pass (pipe) on anything in the transaction (e-commerce)
   # folder. (Safety feature)
-  # This should never happen as we return(pipe) in vcl_rcv,
-  # But Just In Case (tm)
   if (req.url ~ "^/transaction" ) {
     set beresp.ttl = 0s;
     set beresp.http.X-Cacheable = "NO: Transaction Folder";
@@ -673,6 +675,17 @@ sub vcl_fetch {
   }
 
 
+  ## If we're not logged in, kill the dam PHPSESSID cookie
+  if (beresp.http.Set-Cookie) {
+    header.remove(beresp.http.Set-Cookie, "PHPSESSID");
+    set beresp.http.X-DMN-Debug-PHPSESSID = "Removed";
+    if (beresp.http.Set-Cookie ~ "^ *$") {
+      unset beresp.http.Set-Cookie;
+      set beresp.http.X-DMN-Debug-PHPSESSID = "Removed, Set-Cookie UNSET";
+    }
+  }
+
+  
   # Homepage isn't personalized for anonymous,
   # And doesn't really need to set any cookies
   if (req.url == "/") {
@@ -687,17 +700,6 @@ sub vcl_fetch {
   
 
 
-  ## If we're not logged in, kill the dam PHPSESSID cookie
-  if (beresp.http.Set-Cookie) {
-    header.remove(beresp.http.Set-Cookie, "PHPSESSID");
-    set beresp.http.X-DMN-Debug-PHPSESSID = "Removed";
-    if (beresp.http.Set-Cookie ~ "^ *$") {
-      unset beresp.http.Set-Cookie;
-      set beresp.http.X-DMN-Debug-PHPSESSID = "Removed, Set-Cookie UNSET";
-    }
-  }
-
-  
   #if (req.url ~ "/permalink/") {
   #    unset beresp.http.expires;
   #    set beresp.ttl = 30s;
