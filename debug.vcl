@@ -689,13 +689,18 @@ sub vcl_fetch {
   # Homepage isn't personalized for anonymous,
   # And doesn't really need to set any cookies
   if (req.url == "/") {
-    set beresp.ttl = 30s;
+    if (!(beresp.http.Set-Cookie)) {
+      set beresp.ttl = 30s;
+      set beresp.http.X-Cacheable-1 = "YES: Forced cache Front Door (" + beresp.ttl + ")";
+    } else {
+      set beresp.http.X-Cacheable-1 = "NO: Front Door with COOKIES";
+    }
     # We just want to cache it here - not sure we want browser to cache
     #unset beresp.http.expires;
     #set beresp.http.Cache-Control = "public, max-age = 30";
     #set beresp.http.X-DMN-Adjust-Age = "Yes";
     #set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
-    return(deliver);
+    #return(deliver);
   }
   
 
