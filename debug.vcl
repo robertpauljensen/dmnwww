@@ -244,6 +244,8 @@ sub vcl_recv {
   if (req.request != "GET" && req.request != "HEAD") {
     /* We only deal with GET and HEAD by default */
     set req.backend = www;
+    set req.http.X-DMN-Debug-Backend-Director = 
+      "www (Skipping request type: " + req.request + ")" ;
     return (pass);
   }
 
@@ -317,6 +319,7 @@ sub vcl_recv {
     set req.backend = uploads;
     call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
+    set req.http.X-DMN-Debug-Backend-Director = "Uploads" ;
     return(lookup);
   }
 
@@ -330,6 +333,7 @@ sub vcl_recv {
     set req.backend = www;
     call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
+    set req.http.X-DMN-Debug-Backend-Director = "www (non-uploads static file)" ;
     return(lookup);
   }
 
@@ -347,7 +351,7 @@ sub vcl_recv {
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - RSS Feed";
     unset req.http.Cookie;
     call NormReqEncoding; 
-    set req.http.X-DMN-Debug-Backend-Director = "www";
+    set req.http.X-DMN-Debug-Backend-Director = "www (rss)";
     set req.backend = www;
     call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
@@ -360,7 +364,7 @@ sub vcl_recv {
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - Atom Feed";
     unset req.http.Cookie;
     call NormReqEncoding; 
-    set req.http.X-DMN-Debug-Backend-Director = "www";
+    set req.http.X-DMN-Debug-Backend-Director = "www (Atom)";
     set req.backend = www;
     call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
@@ -483,6 +487,13 @@ sub vcl_recv {
 }		      
 		      
 
+
+
+
+
+
+
+
 sub vcl_fetch {
   ## Throw out the easy crap
   ## Retry Support
@@ -495,11 +506,14 @@ sub vcl_fetch {
 
   if (req.http.X-DMN-Debug-Backend-Chain) {
     set req.http.X-DMN-Debug-Backend-Chain = 
-      req.http.X-DMN-Debug-Backend-Chain + ":" + beresp.backend.name;  
+      req.http.X-DMN-Debug-Backend-Chain + ":" + beresp.backend.name;
   } else {
     set req.http.X-DMN-Debug-Backend-Chain = beresp.backend.name;  
   }
+  set beresp.http.X-DMN-Debug-Backend-Chain    = req.http.X-DMN-Debug-Backend-Chain;
+  set beresp.http.X-DMN-Debug-Backend-Director = req.http.X-DMN-Debug-Backend-Director ;
 
+   
 
   ## Don't retry bad bots or spammers -
   ## Don't cache them either (so no hit for pass)
@@ -594,7 +608,7 @@ sub vcl_fetch {
     set beresp.http.Cache-Control = "public, max-age = 3600";
     set beresp.http.X-DMN-Cache-Primer = "Yes (cookies stripped, caching overridden)";
     set beresp.http.X-Cacheable = "YES: Cache Primer: " + beresp.ttl;
-    return(deliver);
+    #return(deliver);
   }    
   
 
@@ -653,7 +667,7 @@ sub vcl_fetch {
     set beresp.ttl = 7d;
     set beresp.http.Cache-Control = "public, max-age = 604800";
     set beresp.http.X-Cacheable = "YES:Theme Image File: " + beresp.ttl;
-    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static Theme File";
     set beresp.http.X-DMN-Strip-deliver = "Yes";
   }
 
@@ -661,7 +675,7 @@ sub vcl_fetch {
 
   if (beresp.http.X-DMN-Strip-Deliver) {
     unset beresp.http.X-DMN-Strip-deliver;  
-    set beresp.http.X-DMN-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-Int-Adjust-Age = "Yes";
     unset beresp.http.Set-Cookie;
     unset beresp.http.expires;
     return(deliver);
@@ -687,13 +701,13 @@ sub vcl_fetch {
   }
 
 
-  unset beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL;
+  unset beresp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL;
   
   # Homepage isn't personalized for anonymous,
   # And doesn't really need to set any cookies
   if (req.url == "/") {
     if (!(beresp.http.Set-Cookie)) {
-      set beresp.ttl = 300s;
+      set beresp.ttl = 600s;
       set beresp.http.X-Cacheable-1 = "YES: Forced cache Front Door (" + beresp.ttl + ")";
     } else {
       set beresp.http.X-Cacheable-1 = "NO: Front Door with COOKIES";
@@ -703,14 +717,14 @@ sub vcl_fetch {
     #set beresp.http.Cache-Control = "public, max-age = 30";
     #set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
     #return(deliver);
-    set beresp.http.X-DMN-Adjust-Age = "Yes";
-    set beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
+    set beresp.http.X-DMN-Int-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL = "YES";
   }
 
   # Allow Story pages to set cookies if needed, otherwise cache them
   if (req.url ~ "/permalink/") {
     if (!(beresp.http.Set-Cookie)) {
-      set beresp.ttl = 120s;
+      set beresp.ttl = 3600s;
       set beresp.http.X-DMN-Debug-Cacheable-1 = "YES: Forced Story Page (" + beresp.ttl + ")";
     } else {
       set beresp.http.X-DMN-Debug-Cacheable-1 = "NO: Story Page with COOKIES";
@@ -718,11 +732,11 @@ sub vcl_fetch {
     # We just want to cache it here - not sure we want browser to cache
     #unset beresp.http.expires;
     #set beresp.http.Cache-Control = "public, max-age = 30";
-    #set beresp.http.X-DMN-Adjust-Age = "Yes";
+    #set beresp.http.X-DMN-Int-Adjust-Age = "Yes";
     #set beresp.http.X-Cacheable = "Foced cache Front Door (" + beresp.ttl + ")";
     #return(deliver);
-    set beresp.http.X-DMN-Adjust-Age = "Yes";
-    set beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL = "YES";
+    set beresp.http.X-DMN-Int-Adjust-Age = "Yes";
+    set beresp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL = "YES";
   }
   
 
@@ -731,14 +745,14 @@ sub vcl_fetch {
   #    unset beresp.http.expires;
   #    set beresp.ttl = 30s;
   #    set beresp.http.Cache-Control = "public, max-age = 30";
-  #    set beresp.http.X-DMN-Adjust-Age = "Yes";
+  #    set beresp.http.X-DMN-Int-Adjust-Age = "Yes";
   #    set beresp.http.X-Cacheable = "Foced cache Story Page (" + beresp.ttl + ")";
   #    return(deliver);
   #}
   
   
   # Honour Cache Controls
-  if ( !(beresp.http.X-DMN-OVERRIDE-CACHE-CONTROL)) {
+  if ( !(beresp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL)) {
     if ( beresp.http.Cache-Control ~ "no-cache" ) {
       set beresp.ttl = 0s;
       set beresp.http.X-Cacheable = "NO:Cache-Control=no-cache";
@@ -846,8 +860,8 @@ sub vcl_deliver {
   set req.http.X-DMN-Debug-Callpath =
       req.http.X-DMN-Debug-Callpath + ", vcl_deliver";
   
-  if (resp.http.X-DMN-Adjust-Age) {
-    #unset resp.http.X-DMN-Adjust-Age;
+  if (resp.http.X-DMN-Int-Adjust-Age) {
+    #unset resp.http.X-DMN-Int-Adjust-Age;
     set resp.http.X-DMN-Debug-Age = resp.http.age;
     set resp.http.age = "0";
     # set resp.http.expires = obj.ttl;
@@ -858,23 +872,7 @@ sub vcl_deliver {
     set resp.http.X-Forwarded-For = req.http.X-Forwarded-For ;
     set resp.http.X-DMN-Debug = req.http.X-DMN-Debug ;
     set resp.http.X-DMN-Debug-Callpath =  req.http.X-DMN-Debug-Callpath;
-    set resp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
-    set resp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
-    #set resp.http.X-DMN-Debug-PHPSESSID =  beresp.http.X-DMN-Debug-PHPSESSID;
-    if ( req.http.X-DMN-Use-Uploads ) {
-      set resp.http.X-DMN-Use-Uploads = req.http.X-DMN-Use-Uploads;
-    }
-    #if ( req.http.X-DMN-Debug-Cooked-Cookies ) {
-    #  set resp.http.X-DMN-Debug-Cooked-Cookies = req.http.X-DMN-Debug-Cooked-Cookies;
-    #}
-    
-    set resp.http.X-DMN-Debug-Backend-Director =
-      req.http.X-DMN-Debug-Backend-Director ;
-    set resp.http.X-DMN-Debug-Backend-Restarts = req.restarts ;
-    set resp.http.X-DMN-Debug-Backend-Chain = req.http.X-DMN-Debug-Backend-Chain;
-    set resp.http.X-DMN-Debug-Backend-Grace = req.http.X-DMN-Debug-Backend-Grace;
     set resp.http.X-DMN-Debug-Recv-Returned = req.http.X-DMN-Debug-Recv-Returned;
-
     if (req.http.X-Debug-Orig-Request) {
       set resp.http.X-Debug-Orig-Request = req.http.X-Debug-Orig-Request ;
       set resp.http.X-Debug-Orig-Host = req.http.X-Debug-Orig-Host ; 
@@ -884,15 +882,63 @@ sub vcl_deliver {
       set resp.http.X-Debug-Orig-Accept-Encoding = req.http.X-Debug-Orig-Accept-Encoding ;
       set resp.http.X-Debug-Orig-Forwarded-For = req.http.X-Debug-Orig-Forwarded-For ;
     }
+    if (req.http.X-DMN-Int-Hit) {
+      set resp.http.X-DMN-Int-Hit = "Yes";
+      set resp.http.X-DMN-Debug-Cache-Hit = "Yes";
+    }
+    else {
+      /* Missed */
+      set resp.http.X-DMN-Int-Miss = "Yes";
+      set resp.http.X-DMN-Debug-Encoding-Changed = req.http.X-DMN-Debug-Encoding-Changed ;
+      set resp.http.X-DMN-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset ;
+      set resp.http.X-DMN-Debug-Backend-Restarts = req.restarts ;
+      set resp.http.X-DMN-Debug-Backend-Chain = req.http.X-DMN-Debug-Backend-Chain;
+      set resp.http.X-DMN-Debug-Backend-Director = req.http.X-DMN-Debug-Backend-Director ;
+      set resp.http.X-DMN-Debug-Backend-Grace = req.http.X-DMN-Debug-Backend-Grace;
+      #if ( req.http.X-DMN-Debug-Cooked-Cookies ) {
+      #  set resp.http.X-DMN-Debug-Cooked-Cookies = req.http.X-DMN-Debug-Cooked-Cookies;
+      #}
+    }
   }
 
+    unset resp.http.X-Cache;
+    unset resp.http.X-Cacheable;
+    unset resp.http.X-Cacheable-1;
+    unset resp.http.X-DMN-Debug;
+    unset resp.http.X-DMN-Debug-Age;
+    unset resp.http.X-DMN-Debug-Backend-Chain;
+    unset resp.http.X-DMN-Debug-Backend-Director;
+    unset resp.http.X-DMN-Debug-Cache-Hit;
+    unset resp.http.X-DMN-Debug-Callpath;
+    unset resp.http.X-DMN-Debug-PHPSESSID;
+    unset resp.http.X-DMN-Debug-Recv-Returned;
+    unset resp.http.X-DMN-Int-Adjust-Age;
+    unset resp.http.X-DMN-Int-Hit;
+    unset resp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL;
+    unset resp.http.X-Forwarded-For;
+    unset resp.http.X-PASSED;
+    unset resp.http.X-Varnish;
+    unset resp.http.X-W3TC-Minify;
+    unset resp.http.X-DMN-Debug-Backend-Grace;
+    unset resp.http.X-DMN-Debug-Backend-Restarts;
+    unset resp.http.X-DMN-Debug-Cookies-Unset;
+    unset resp.http.X-DMN-Debug-Encoding-Changed;
+    unset resp.http.X-DMN-Int-Miss;
 
+
+
+
+
+
+  if ( req.http.X-DMN-Use-Uploads ) {
+    set resp.http.X-DMN-Use-Uploads = req.http.X-DMN-Use-Uploads;
+  }
+  
   if (req.http.X-PASSED) {
     set resp.http.X-PASSED = "Yep";
   } else {
     set resp.http.X-PASSED = "Nope";
-  }
-  
+  }  
   
   if (obj.hits == 0) {
     set resp.http.X-Cache = "MISS";
@@ -904,12 +950,12 @@ sub vcl_deliver {
     }
   }
   
-  if (! req.http.X-DMN-Debug ) {
+  if (!( req.http.X-DMN-Debug )) {
     unset resp.http.X-DMN-Use-Uploads;
     #unset resp.http.X-Varnish;
   }
 
-
+  
   ## BAN Lurker Support
   unset resp.http.x-url;
   unset resp.http.x-host;
@@ -956,6 +1002,8 @@ sub vcl_hash {
 sub vcl_hit {
   set req.http.X-DMN-Debug-Callpath =
     req.http.X-DMN-Debug-Callpath + ", vcl_hit";
+
+  set req.http.X-DMN-Int-Hit = "Yes";
   
   if (req.request == "PURGE") {
     purge;
@@ -970,6 +1018,8 @@ sub vcl_hit {
 sub vcl_miss {
   set req.http.X-DMN-Debug-Callpath =
     req.http.X-DMN-Debug-Callpath + ", vcl_miss";
+  
+  set req.http.X-DMN-Int-Miss = "Yes";
   
   if (req.request == "PURGE") {
     purge;
