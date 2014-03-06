@@ -348,29 +348,26 @@ sub vcl_recv {
       req.url ~ "(?i)^/top-stories/rss.xml$" ||
       req.url == "/\?feed=rss" ) {
     set req.url = "/?feed=rss";
-    set req.http.X-DMN-Debug-Cookies-Unset = "YES - RSS Feed";
-    unset req.http.Cookie;
-    call NormReqEncoding; 
-    set req.http.X-DMN-Debug-Backend-Director = "www (rss)";
-    set req.backend = www;
-    call CheckRestarts;
-    set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
-    return(lookup);
   }	
 
   if (req.url ~ "(?i)^/stories\?func=viewAtom" ||
       req.url == "/\?feed=atom" ) {
     set req.url ="/?feed=atom";
-    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Atom Feed";
+  }
+
+  if ( req.url ~ "(?i)\?feed=(rss|atom)$" ||
+       req.url ~ "(?i)\/feed\/(rss|atom)$" ||
+       req.url ~ "(?i)\/feed$" ) {
+    set req.http.X-DMN-Debug-Cookies-Unset = "YES - RSS/Atom Feed";
     unset req.http.Cookie;
     call NormReqEncoding; 
-    set req.http.X-DMN-Debug-Backend-Director = "www (Atom)";
+    set req.http.X-DMN-Debug-Backend-Director = "www (RSS/Atom)";
     set req.backend = www;
     call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Lookup";
     return(lookup);
   }
-
+  
   # At this point, if they're logged in,
   # They're getting a personalized page - so pass
   if (req.http.cookie ~ "wordpress_logged_in") {
@@ -617,6 +614,17 @@ sub vcl_fetch {
 
   set beresp.http.X-Cacheable = "YES: No Changes Made";
   unset beresp.http.X-DMN-Strip-deliver;
+
+  ## Cache the Feeds...
+  if ( req.url ~ "(?i)\?feed=(rss|atom)$" ||
+       req.url ~ "(?i)\/feed\/(rss|atom)$" ||
+       req.url ~ "(?i)\/feed$") {
+    set beresp.ttl = 300s;
+    set beresp.http.Cache-Control = "public, max-age=300s";
+    set beresp.http.X-Cacheable = "YES: Forced RSS/Atom Feed";
+    set beresp.http.X-DMN-Debug-Cookies-Stripped = "YES: Forced RSS/Atom Feed";
+    set beresp.http.X-DMN-Strip-deliver = "Yes";  
+  }
   
   if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$") {
     set beresp.http.X-Cacheable = "YES:Forced Image File: ";
@@ -939,27 +947,27 @@ sub vcl_deliver {
   }
 
     #unset resp.http.X-Cache;
-    unset resp.http.X-Cacheable;
-    unset resp.http.X-Cacheable-1;
-    unset resp.http.X-DMN-Debug;
-    unset resp.http.X-DMN-Debug-Age;
-    unset resp.http.X-DMN-Debug-Backend-Chain;
-    unset resp.http.X-DMN-Debug-Backend-Director;
-    unset resp.http.X-DMN-Debug-Backend-Grace;
-    unset resp.http.X-DMN-Debug-Backend-Restarts;
-    unset resp.http.X-DMN-Debug-Cookies-Unset;
-    unset resp.http.X-DMN-Debug-Cache-Hit;
-    unset resp.http.X-DMN-Debug-Callpath;
-    unset resp.http.X-DMN-Debug-Expires-Adjusted;
-    unset resp.http.X-DMN-Debug-Encoding-Changed;
-    unset resp.http.X-DMN-Debug-PHPSESSID;
-    unset resp.http.X-DMN-Debug-Recv-Returned;
+    #unset resp.http.X-Cacheable;
+    #unset resp.http.X-Cacheable-1;
+    #unset resp.http.X-DMN-Debug;
+    #unset resp.http.X-DMN-Debug-Age;
+    #unset resp.http.X-DMN-Debug-Backend-Chain;
+    #unset resp.http.X-DMN-Debug-Backend-Director;
+    #unset resp.http.X-DMN-Debug-Backend-Grace;
+    #unset resp.http.X-DMN-Debug-Backend-Restarts;
+    #unset resp.http.X-DMN-Debug-Cookies-Unset;
+    #unset resp.http.X-DMN-Debug-Cache-Hit;
+    #unset resp.http.X-DMN-Debug-Callpath;
+    #unset resp.http.X-DMN-Debug-Expires-Adjusted;
+    #unset resp.http.X-DMN-Debug-Encoding-Changed;
+    #unset resp.http.X-DMN-Debug-PHPSESSID;
+    #unset resp.http.X-DMN-Debug-Recv-Returned;
     unset resp.http.X-DMN-Int-Adjust-Age;
     unset resp.http.X-DMN-Int-Hit;
     unset resp.http.X-DMN-Int-Miss;
     unset resp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL;
-    unset resp.http.X-DMN-Use-Uploads;
-    unset resp.http.X-Forwarded-For;
+    #unset resp.http.X-DMN-Use-Uploads;
+    #unset resp.http.X-Forwarded-For;
     #unset resp.http.X-PASSED;
     unset resp.http.X-Varnish;
     unset resp.http.X-W3TC-Minify;
