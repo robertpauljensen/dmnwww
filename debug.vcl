@@ -660,8 +660,8 @@ sub vcl_fetch {
   # Not Tagged - These can change more often, so give it short ttl
   if (req.url ~ "(?i)\.(bmp|ico|jpe?g|gif|png)$" ||
       req.url ~ "(?i)\.(js|css|zip|tgz|gz|rar|bz2|pdf|txt|tar|wav|rtf|flv|swf)$") {
-    set beresp.ttl = 120s;
-    set beresp.http.Cache-Control = "public, max-age=120";
+    set beresp.ttl = 1200s;
+    set beresp.http.Cache-Control = "public, max-age=1200";
     set beresp.http.X-Cacheable = 
       beresp.http.X-Cacheable + "Untagged (" + beresp.ttl + ")";
     set beresp.http.X-DMN-Debug-Cookies-Stripped = "Yes - Static File";
@@ -669,7 +669,7 @@ sub vcl_fetch {
   }
 
   # If its a DMN theme image, cache it for longer..
-  # force woff files as we only have 1 font and it never changes
+  # force font files as we only have 1 font and it never changes
   if (req.url ~ "(?i)DMN2013/img/.*\.(bmp|ico|jpe?g|gif|png)(\?[a-z0-9]+)?$" ||
       req.url ~ "(?i)\.woff$") {
     set beresp.ttl = 7d;
@@ -949,25 +949,25 @@ sub vcl_deliver {
     #unset resp.http.X-Cache;
     #unset resp.http.X-Cacheable;
     #unset resp.http.X-Cacheable-1;
-    #unset resp.http.X-DMN-Debug;
+    unset resp.http.X-DMN-Debug;
     #unset resp.http.X-DMN-Debug-Age;
-    #unset resp.http.X-DMN-Debug-Backend-Chain;
-    #unset resp.http.X-DMN-Debug-Backend-Director;
-    #unset resp.http.X-DMN-Debug-Backend-Grace;
-    #unset resp.http.X-DMN-Debug-Backend-Restarts;
-    #unset resp.http.X-DMN-Debug-Cookies-Unset;
+    unset resp.http.X-DMN-Debug-Backend-Chain;
+    unset resp.http.X-DMN-Debug-Backend-Director;
+    unset resp.http.X-DMN-Debug-Backend-Grace;
+    unset resp.http.X-DMN-Debug-Backend-Restarts;
+    unset resp.http.X-DMN-Debug-Cookies-Unset;
     #unset resp.http.X-DMN-Debug-Cache-Hit;
-    #unset resp.http.X-DMN-Debug-Callpath;
-    #unset resp.http.X-DMN-Debug-Expires-Adjusted;
-    #unset resp.http.X-DMN-Debug-Encoding-Changed;
-    #unset resp.http.X-DMN-Debug-PHPSESSID;
-    #unset resp.http.X-DMN-Debug-Recv-Returned;
+    unset resp.http.X-DMN-Debug-Callpath;
+    unset resp.http.X-DMN-Debug-Expires-Adjusted;
+    unset resp.http.X-DMN-Debug-Encoding-Changed;
+    unset resp.http.X-DMN-Debug-PHPSESSID;
+    unset resp.http.X-DMN-Debug-Recv-Returned;
     unset resp.http.X-DMN-Int-Adjust-Age;
     unset resp.http.X-DMN-Int-Hit;
     unset resp.http.X-DMN-Int-Miss;
     unset resp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL;
-    #unset resp.http.X-DMN-Use-Uploads;
-    #unset resp.http.X-Forwarded-For;
+    unset resp.http.X-DMN-Use-Uploads;
+    unset resp.http.X-Forwarded-For;
     #unset resp.http.X-PASSED;
     unset resp.http.X-Varnish;
     unset resp.http.X-W3TC-Minify;
