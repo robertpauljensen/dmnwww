@@ -355,6 +355,10 @@ sub vcl_recv {
     set req.url ="/?feed=atom";
   }
 
+  if (req.url ~ "(?i)\/jobs\?func=viewAtom$") {
+    set req.url = "/jobs?feed=atom";
+  }   
+
   if ( req.url ~ "(?i)\?feed=(rss|atom)$" ||
        req.url ~ "(?i)\/feed\/(rss|atom)$" ||
        req.url ~ "(?i)\/feed$" ) {
