@@ -262,12 +262,14 @@ sub vcl_recv {
   if (req.url ~ "^/wp-(login|admin)" ||
       req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
       req.http.Authorization ) {
+    set req.http.X-DMN-Debug = "Pipe";
     return (pipe);
   }
   
   # Always pass (pipe) on anything in the transaction (e-commerce)
   # folder. (Safety Feature)
   if (req.url ~ "^/transaction" ) { 
+    set req.http.X-DMN-Debug = "Pipe";
     return (pipe); 
   }
 
@@ -279,6 +281,18 @@ sub vcl_recv {
     error 777 "Oops";
   }
 
+
+  if (req.url ~ "(~|.bak|.swp)$" ) {
+    error 404;
+  }
+  
+  if (req.url ~ "(readme.html|readme.txt|wp-config.php|install.php|.htaccess)$" ) {
+    error 404;
+ }
+ 
+  if (req.url ~ "/wp-includes/.*\.php") {
+    error 404;
+ }
 
   ## This is our cache primer - strip cookies, and miss
   if (req.http.User-Agent == "DMN Cache Primer" && req.http.X-DMN-Cache-Primer == "Yes") {
@@ -953,25 +967,25 @@ sub vcl_deliver {
     #unset resp.http.X-Cache;
     #unset resp.http.X-Cacheable;
     #unset resp.http.X-Cacheable-1;
-    unset resp.http.X-DMN-Debug;
+    #unset resp.http.X-DMN-Debug;
     #unset resp.http.X-DMN-Debug-Age;
-    unset resp.http.X-DMN-Debug-Backend-Chain;
-    unset resp.http.X-DMN-Debug-Backend-Director;
-    unset resp.http.X-DMN-Debug-Backend-Grace;
-    unset resp.http.X-DMN-Debug-Backend-Restarts;
-    unset resp.http.X-DMN-Debug-Cookies-Unset;
+    #unset resp.http.X-DMN-Debug-Backend-Chain;
+    #unset resp.http.X-DMN-Debug-Backend-Director;
+    #unset resp.http.X-DMN-Debug-Backend-Grace;
+    #unset resp.http.X-DMN-Debug-Backend-Restarts;
+    #unset resp.http.X-DMN-Debug-Cookies-Unset;
     #unset resp.http.X-DMN-Debug-Cache-Hit;
-    unset resp.http.X-DMN-Debug-Callpath;
-    unset resp.http.X-DMN-Debug-Expires-Adjusted;
-    unset resp.http.X-DMN-Debug-Encoding-Changed;
-    unset resp.http.X-DMN-Debug-PHPSESSID;
-    unset resp.http.X-DMN-Debug-Recv-Returned;
-    unset resp.http.X-DMN-Int-Adjust-Age;
-    unset resp.http.X-DMN-Int-Hit;
-    unset resp.http.X-DMN-Int-Miss;
-    unset resp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL;
-    unset resp.http.X-DMN-Use-Uploads;
-    unset resp.http.X-Forwarded-For;
+    #unset resp.http.X-DMN-Debug-Callpath;
+    #unset resp.http.X-DMN-Debug-Expires-Adjusted;
+    #unset resp.http.X-DMN-Debug-Encoding-Changed;
+    #unset resp.http.X-DMN-Debug-PHPSESSID;
+    #unset resp.http.X-DMN-Debug-Recv-Returned;
+    #unset resp.http.X-DMN-Int-Adjust-Age;
+    #unset resp.http.X-DMN-Int-Hit;
+    #unset resp.http.X-DMN-Int-Miss;
+    #unset resp.http.X-DMN-Int-OVERRIDE-CACHE-CONTROL;
+    #unset resp.http.X-DMN-Use-Uploads;
+    #unset resp.http.X-Forwarded-For;
     #unset resp.http.X-PASSED;
     unset resp.http.X-Varnish;
     unset resp.http.X-W3TC-Minify;
