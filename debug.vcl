@@ -294,6 +294,10 @@ sub vcl_recv {
     error 404;
  }
 
+ if (req.url ~ "uploads/.*\.php$") {
+   error 404;
+ }
+ 
   ## This is our cache primer - strip cookies, and miss
   if (req.http.User-Agent == "DMN Cache Primer" && req.http.X-DMN-Cache-Primer == "Yes") {
     unset req.http.Cookie;
