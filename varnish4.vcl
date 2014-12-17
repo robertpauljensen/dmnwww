@@ -137,7 +137,6 @@ sub set_req_debug {
     set req.http.X-Debug-Orig-Request = req.method;
     set req.http.X-Debug-Orig-Host = req.http.host;
     set req.http.X-Debug-Orig-Port = req.http.port;
-    set req.http.X-Debug-Orig-Url  = req.url;
     set req.http.X-Debug-Orig-Client  = client.ip;
     if (req.http.Accept-Encoding) {
       set req.http.X-Debug-Orig-Accept-Encoding =
@@ -152,21 +151,24 @@ sub set_req_debug {
 
 sub set_resp_debug {
   if (req.http.X-DMN-Debug) {
-    set resp.http.X-DMN-Debug = req.http.X-DMN-Debug;
-    set resp.http.X-Debug-Orig-Request = req.http.X-Debug-Orig-Request;
-    set resp.http.X-Debug-Orig-Host = req.http.X-Debug-Orig-Host;
-    set resp.http.X-Debug-Orig-Port = req.http.X-Debug-Orig-Port;
-    set resp.http.X-Debug-Orig-Url = req.http.X-Debug-Orig-Url;
-    set resp.http.X-Debug-Orig-Client = req.http.X-Debug-Orig-Client;
+    #set resp.http.X-DMN-Debug = req.http.X-DMN-Debug;
+    #set resp.http.X-Debug-Orig-Request = req.http.X-Debug-Orig-Request;
+    #set resp.http.X-Debug-Orig-Host = req.http.X-Debug-Orig-Host;
+    #set resp.http.X-Debug-Orig-Port = req.http.X-Debug-Orig-Port;
+    #set resp.http.X-Debug-Orig-Client = req.http.X-Debug-Orig-Client;
+    set resp.http.X-Debug-Url-Raw  = req.http.X-Debug-Url-Raw;
+    set resp.http.X-Debug-Url-Cooked  = req.http.X-Debug-Url-Cooked;
+
     if (req.http.X-Debug-Orig-Accept-Encoding) {
       set resp.http.X-Debug-Orig-Accept-Encoding = req.http.X-Debug-Orig-Accept-Encoding;
     }
     set resp.http.X-Debug-Restarts = req.restarts;  
-    if (req.http.X-Debug-Orig-Forwarded-For) {
-      set resp.http.X-Debug-Orig-Forwarded-For = req.http.X-Debug-Orig-Forwarded-For;
-    }
-    set resp.http.X-Debug-Callpath = req.http.X-DMN-Debug-Callpath;
-    set resp.http.X-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset;
+    #if (req.http.X-Debug-Orig-Forwarded-For) {
+    #  set resp.http.X-Debug-Orig-Forwarded-For = req.http.X-Debug-Orig-Forwarded-For;
+    #}
+    #set resp.http.X-Debug-Callpath = req.http.X-DMN-Debug-Callpath;
+    set resp.http.X-Debug-Callpath = resp.http.X-DMN-Debug-Callpath;
+    set resp.http.X-Debug-Cookies-Unset = resp.http.X-DMN-Debug-Cookies-Unset;
     set resp.http.X-Debug-Use-Uploads = req.http.X-DMN-Use-Uploads;  
     set resp.http.X-Debug-Recv-Returned = req.http.X-DMN-Debug-Recv-Returned;
     set resp.http.X-Debug-Backend-Director = req.http.X-DMN-Debug-Backend-Director;
@@ -180,8 +182,9 @@ sub set_resp_debug {
 sub vcl_recv {
   ## Turn on Debug (if desired)
   ## Preserve the origin headers (if desired)
-  ## Handle Purge, Bans, Refresh & 'Odd' verbs
+  ## Handle Verbs - Purge, Bans, Refresh & 'Odd' verbs
   ##  (NO pre-processing, normalization - just do as we're told!)
+  ##
   ## Special Cases
   ## Strip Cookies
   ## Normalize Headers
@@ -190,36 +193,41 @@ sub vcl_recv {
   ##   Handle Uploads Dir ( only when req.method == 'GET' ?)
   ## Force TTL/Caching ?  
 
-
-  #unset req.http.X-DMN-Debug = "Please";
-  set req.http.X-DMN-Debug = "Please";
+  # Do we want debug output ?
+  set req.http.X-Debug-Url-Raw  = req.url;
+  if(req.url ~ "(\?|&)x-dmn-debug=?") {
+    set req.url = regsuball(req.url,"x-dmn-debug(=[%.-_A-z0-9]+&?)?","");
+    set req.http.X-DMN-Debug = "Please DETECTED";
+  }
+  else {
+    unset req.http.X-DMN-Debug;  
+    # Force debug for now
+    set req.http.X-DMN-Debug = "Please";
+  
+  }
+  set req.url = regsub(req.url, "(\?&?)$", "");
+ 
   set req.http.X-DMN-Debug-Callpath = "vcl_recv";  
   call set_req_debug;
 
   ## PURGE/BAN/REFRESH
   if (req.method == "PURGE") {
-    if (!client.ip ~ purgers) {
-      return(synth(405, "Purge Not allowed."));
-    }
+    if (!client.ip ~ purgers) { return(synth(405, "Purge Not allowed.")); }
     return (purge);
   }
   
   ## TODO: We really should check the required headers are present!
   if (req.method == "BAN") {
-    if (!client.ip ~ purgers) {
-      return(synth(405, "Ban Not allowed."));
-    }
+    if (!client.ip ~ purgers) { return(synth(405, "Ban Not allowed.")); }
     ban("obj.http.x-url ~ " + req.http.x-ban-url + 
       " && obj.http.x-host ~ " + req.http.x-ban-host);
-      return(synth(200, "Banned From Cache."));
+    return(synth(200, "Banned From Cache."));
   }
 		       
   ## TODO: add url parm to force refresh ?? 
   if (req.method == "REFRESH") {
-    if (!client.ip ~ purgers) {
-      # This is to prevent forced refreshes bogging down site
-      return(synth(200, "Refresh Not Allowed."));
-    }
+    # This is to prevent forced refreshes bogging down site
+    if (!client.ip ~ purgers) { return(synth(200, "Refresh Not Allowed.")); }
     set req.method = "GET";
     set req.hash_always_miss = true;
   }
@@ -284,6 +292,7 @@ sub vcl_recv {
   # uploaded images, etc.
   if (req.url ~ "^/wp-content/uploads" || req.http.X-DMN-Use-Uploads ) {
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - Uploads File";
+    set req.http.purgeCookies = "YES - Uploads File";
     unset req.http.Cookie;
     #call NormReqEncoding;
     set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
@@ -291,10 +300,12 @@ sub vcl_recv {
     # remove the cache tag at the end as images don't change
     # they are only deleted (...foo.png?1c34ed )
     set req.url = regsub(req.url, "\?[1234567890abcdef]+", "");
+    set req.http.X-Debug-Url-Cooked  = req.url;
     
     set req.http.X-DMN-Debug-Backend-Director = 
        "uploads (strips cookies): " + req.url;
     set req.backend_hint = uploads.backend();
+    set req.http.uploads = "1";
     #call CheckRestarts;
     set req.http.X-DMN-Use-Uploads = "Yes";  
     set req.http.X-DMN-Debug-Recv-Returned = "Hash";
@@ -312,7 +323,9 @@ sub vcl_recv {
   if (req.url ~ "\.(css|js|jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|txt|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$" ||
       req.url ~ "\.(css|js)\?ver=.*$" ) {
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
+    set req.http.purgeCookies = "YES - Media File";
     unset req.http.Cookie;
+
     #call NormReqEncoding; 
     #call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Hash";
@@ -326,6 +339,7 @@ sub vcl_recv {
        req.url ~ "(?i)\/feed\/(rss|atom)$" ||
        req.url ~ "(?i)\/feed$" ) {
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - RSS/Atom Feed";
+    set req.http.purgeCookies = "YES - RSS/Atom Feed";
     unset req.http.Cookie;
     #call NormReqEncoding; 
     set req.http.X-DMN-Debug-Backend-Director = "www (RSS/Atom)";
@@ -336,9 +350,10 @@ sub vcl_recv {
 
   # At this point, if they're logged in,
   # They're getting a personalized page - so pass
-  if (req.http.cookie ~ "wordpress_logged_in") {
+  if (req.http.Cookie ~ "wordpress_logged_in") {
     set req.http.X-DMN-LOGGED-IN = "YES";  
     set req.http.X-DMN-Debug-Cookies-Unset = "NO - Logged In";
+    unset req.http.purgeCookies;
     set req.http.X-DMN-Debug-Backend-Director = "www (Logged In)";
     #call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Pass! (Logged In)";
@@ -352,8 +367,9 @@ sub vcl_recv {
   
   ## Front page is easy - its the same for all anonymous visitors
   if (req.url == "/") {
-    unset req.http.cookie;
     set req.http.X-DMN-Debug-Cookies-Unset = "YES - Front Door, NOT logged in";
+    set req.http.purgeCookies = "YES - Front Door, NOT logged in";
+    unset req.http.Cookie;
     set req.http.X-DMN-Debug-Backend-Director = "www (Anon Front Page)";
     #call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Hash";
@@ -404,28 +420,94 @@ sub vcl_recv {
   return(hash);
 }
 
+sub vcl_hash {
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_hash";
+  set req.http.X-Debug-Url-Cooked  = req.url;
+
+}
+
+sub vcl_backend_fetch {
+  set bereq.http.X-DMN-Debug-Callpath =
+    bereq.http.X-DMN-Debug-Callpath + ", vcl_backend_fetch";
+  set bereq.http.X-Debug-Url-Cooked  = bereq.url;
+
+}
 
 sub vcl_backend_response {
-#  set req.http.X-DMN-Debug-Callpath =
-#      req.http.X-DMN-Debug-Callpath + ", vcl_backend_response";
+#  Called after the response headers has been successfully retrieved from
+#  the backend. The vcl_backend_response subroutine may terminate with 
+#  calling return() with one of the following keywords:
 #
+#    deliver
+#      Possibly insert the object into the cache, then deliver it
+#      to the Control will eventually pass to vcl_deliver.
+#
+#    abandon
+#      Abandon the backend request and generates an error.
+#
+#    retry
+#      Retry the backend transaction. Increases the retries 
+#      counter. If the number of retries is higher than max_retries
+#      Varnish emits a guru meditation error.
+
+
+  set beresp.http.X-DMN-Debug-Callpath =
+      bereq.http.X-DMN-Debug-Callpath + ", vcl_backend_response";
+
+  if (bereq.http.purgeCookies ~ "YES") {
+    #set bereq.http.X-Debug-Force-Unset-Cookies = "YES";
+    set beresp.http.X-Debug-Force-Unset-Cookies = "YES";
+    unset beresp.http.Cookie;
+    #unset beresp.http.cookie;
+  }
+  else {
+    set beresp.http.X-Debug-Force-Unset-Cookies = "NO";
+  }
+
+  if (bereq.http.uploads ~ "1") {
+    set beresp.ttl = 100d;
+    return(deliver);
+  }
+  
+  # Don't store backend
+  if (bereq.url ~ "wp-(login|admin)" || bereq.url ~ "preview=true") {
+    set beresp.ttl = 0s;
+    return(deliver);
+  }
+
+  # don't cache response to posted requests or those with basic auth
+  if ( bereq.method == "POST" || bereq.http.Authorization ) {
+    set beresp.ttl = 0s;
+    return(deliver);
+  }
+
+  # don't cache search results
+  if ( bereq.url ~ "\?s=" ){
+    set beresp.ttl = 0s;
+    return (deliver);
+  }
+  
+
+  return (deliver);
 
   # Setup for cacheable first
   #unset beresp.http.Cache-Control;
-  set beresp.http.Cache-Control = "max-age=7200,public";
+  set beresp.http.Cache-Control = "max-age=604800,public";
+  set beresp.http.Expires = now + 360d;
+  set beresp.http.X-Debug-TTL = "1 week";
   set beresp.ttl = 1w;
   set beresp.uncacheable = false;
   unset beresp.http.Pragma;
-  unset beresp.http.expires;
   set beresp.http.freshen = "1";
   # Define the default grace period to serve cached content
-  #set beresp.grace = 30s;
+  set beresp.grace = 30s;
   
-  
+
   # For static content strip all backend cookies
   if (bereq.url ~ "\.(css|js|png|gif|jp(e?)g)|swf|ico") {
-    unset beresp.http.cookie;
-    set beresp.ttl = 1w;
+    #unset beresp.http.cookie;
+    #set beresp.ttl = 1w;
     return (deliver);
   }
   
@@ -436,19 +518,23 @@ sub vcl_backend_response {
     }
     else {
       set beresp.ttl = 45s;
+      set beresp.http.X-Debug-TTL = "45 seconds";
       set beresp.http.Cache-Control = "max-age=20,public";
+      set beresp.http.Expires = now + 20s;
       return (deliver);
     }  
   }
   
-  # Micro Cache Front Door
+  # Micro Cache Stories
   if ( bereq.url ~ "\/permalink" ) {
     if ( beresp.http.cookie ) {
       set beresp.http.X-Debug-Story-Cookies = "1";
     }
     else {
       set beresp.ttl = 60s;
+      set beresp.http.X-Debug-TTL = "60 seconds";
       set beresp.http.Cache-Control = "max-age=30,public";
+      set beresp.http.Expires = now + 30s;
       return (deliver);
     }  
   }
@@ -463,15 +549,17 @@ sub vcl_backend_response {
   set beresp.ttl = 0s;
   set beresp.http.Pragma = "no-cache";
   set beresp.uncacheable = true;
+  set beresp.http.X-Debug-TTL = "NONE";
   unset beresp.http.freshen;
+  unset beresp.http.Expires;
   
   # TODO - Micro Cache Error pages - TODO
   if (beresp.status >= 500 && beresp.status < 600) {
-    unset beresp.http.Cache-Control;
-    set beresp.http.Cache-Control = "no-cache, max-age=0, must-revalidate";
+    #unset beresp.http.Cache-Control;
+    #set beresp.http.Cache-Control = "no-cache, max-age=0, must-revalidate";
     set beresp.ttl = 10s;
-    set beresp.http.Pragma = "no-cache";
-    set beresp.uncacheable = true;
+    #set beresp.http.Pragma = "no-cache";
+    #set beresp.uncacheable = true;
     return(deliver);
   }
 
@@ -481,32 +569,14 @@ sub vcl_backend_response {
     return (deliver);
   }
 								
-  # Don't store backend
-  if (bereq.url ~ "wp-(login|admin)" || bereq.url ~ "preview=true") {
-    set beresp.ttl = 10s;
-    return (deliver);
-  }
-
-  # don't cache response to posted requests or those with basic auth
-  if ( bereq.method == "POST" || bereq.http.Authorization ) {
-    set beresp.ttl = 10s;
-    return (deliver);
-  }
-
-  # don't cache search results
-  if ( bereq.url ~ "\?s=" ){
-    set beresp.ttl = 10s;
-    return (deliver);
-  }
-  
   return (deliver);
 }
 
 
 sub vcl_deliver {
 
-  set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_deliver";
+  set resp.http.X-DMN-Debug-Callpath =
+      resp.http.X-DMN-Debug-Callpath + ", vcl_deliver";
 
   call set_resp_debug;
 
@@ -515,6 +585,7 @@ sub vcl_deliver {
   } else {
     set resp.http.X-Debug-Cache = "HIT (" + obj.hits + " Times)";
     if (resp.http.set-cookie) {
+      set resp.http.X-Debug-WARNING-value = resp.http.set-cookie;
       unset resp.http.set-cookie;
       set resp.http.X-Debug-WARNING = "set-cookie found on cached response ?";
     }
@@ -524,7 +595,7 @@ sub vcl_deliver {
     unset resp.http.freshen;
     set resp.http.age = 0;
   } 
-  
+
 #
 #  if (req.http.X-PASSED) {
 #    set resp.http.X-PASSED = "Yep";
@@ -624,7 +695,7 @@ sub vcl_deliver {
 #
 
   # This seems to cause problems
-  unset resp.http.Last-Modified;
+  #unset resp.http.Last-Modified;
 
   ## BAN Lurker Support
   unset resp.http.x-url;
@@ -632,18 +703,6 @@ sub vcl_deliver {
   unset resp.http.X-Powered-By;
   
 }
-
-sub vcl_hash {
-
-  set req.http.X-DMN-Debug-Callpath =
-    req.http.X-DMN-Debug-Callpath + ", vcl_hash";
-}
-
-
-
-
-
-
 
 sub vcl_pipe {
   # Note that only the first request to the backend will have
@@ -656,6 +715,13 @@ sub vcl_pipe {
   set req.http.X-DMN-Debug-Callpath =
       req.http.X-DMN-Debug-Callpath + ", vcl_pipe";
 
+  set req.http.X-DMN-Debug-Callpath =
+    req.http.X-DMN-Debug-Callpath + ", vcl_pipe";
+  set bereq.http.X-DMN-Debug-Callpath = req.http.X-DMN-Debug-Callpath;
+  
+  set req.http.X-Debug-Url-Cooked  = req.url;
+  set bereq.http.X-Debug-Url-Cooked  = req.http.X-Debug-Url-Cooked;
+  
   set bereq.http.connection = "close";
   set req.http.connection = "close";
     
