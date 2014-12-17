@@ -14,7 +14,7 @@ backend www1 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -30,7 +30,7 @@ backend www2 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -47,7 +47,7 @@ backend www3 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -64,7 +64,7 @@ backend www4 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -81,7 +81,7 @@ backend www5 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -97,7 +97,7 @@ backend upload1 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -111,7 +111,7 @@ backend upload2 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -125,7 +125,7 @@ backend upload3 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -139,7 +139,7 @@ backend upload4 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
@@ -153,7 +153,7 @@ backend upload5 {
     .timeout = 0.6s;
     .window = 8;
     .threshold = 6;
-    .initial = 7;
+    .initial = 5;
   }
   .max_connections = 128;
 }
