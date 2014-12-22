@@ -4,23 +4,9 @@ import std;
 import directors;
 
 include "varnish_backends.vcl";
-
-
-sub sanity_check_url {
-  # Throw out some common 'bad' urls
-  #
-  unset req.http.X-FAILED-SANITY;
-  
-  # Throw out some easy crap early
-  if (req.url ~ "(?i)p=discount-ugg" ) { set req.http.X-FAILED-SANITY = "Yes"; }
-  if (req.url ~ "(?i)class=WebGUI::Asset" ) { set req.http.X-FAILED-SANITY = "Yes"; }
-  if (req.url ~ "(~|.bak|.swp)$" ) {  set req.http.X-FAILED-SANITY = "Yes"; }
-  if (req.url ~ "/wp-includes/.*\.php") { set req.http.X-FAILED-SANITY = "Yes"; }
-  if (req.url ~ "uploads/.*\.php$") { set req.http.X-FAILED-SANITY = "Yes"; }
-  if (req.url ~ "(readme.html|readme.txt|wp-config.php|install.php|.htaccess)$" ) {
-    set req.http.X-FAILED-SANITY = "Yes";
-  } 
-}
+include "banned.vcl";
+include "sanity_checks.vcl";
+include "preprocess.vcl";
 
 sub normalize_feeds {
   # SAH - Normalize all the RSS crap
@@ -86,14 +72,15 @@ sub set_resp_debug {
     #}
     #set resp.http.X-Debug-Callpath = req.http.X-DMN-Debug-Callpath;
     set resp.http.X-Debug-Callpath = resp.http.X-DMN-Debug-Callpath;
-    set resp.http.X-Debug-Cookies-Unset = resp.http.X-DMN-Debug-Cookies-Unset;
+    set resp.http.X-Debug-Cookies-Unset = req.http.X-DMN-Debug-Cookies-Unset;
     set resp.http.X-Debug-Use-Uploads = req.http.X-DMN-Use-Uploads;  
     set resp.http.X-Debug-Recv-Returned = req.http.X-DMN-Debug-Recv-Returned;
     set resp.http.X-Debug-Backend-Director = req.http.X-DMN-Debug-Backend-Director;
     set resp.http.X-Debug = req.http.X-DMN-Debug;
     set resp.http.X-Debug-Logged-In = "No";
     set resp.http.X-Debug-Logged-In = req.http.X-DMN-LOGGED-IN;
-    set resp.http.X-Debug-Cooked-Cookies = req.http.X-DMN-Debug-Cooked-Cookies;
+    set resp.http.X-Debug-Cookies-Raw    = req.http.X-DMN-Debug-Cookies-Raw;
+    set resp.http.X-Debug-Cookies-Cooked = req.http.X-DMN-Debug-Cookies-Cooked;
   }  
 }
 
@@ -111,27 +98,35 @@ sub vcl_recv {
   ##   Handle Uploads Dir ( only when req.method == 'GET' ?)
   ## Force TTL/Caching ?  
 
-  # Do we want debug output ?
-  set req.http.X-Debug-Url-Raw  = req.url;
-  if(req.url ~ "(\?|&)x-dmn-debug=?") {
-    set req.url = regsuball(req.url,"x-dmn-debug(=[%.-_A-z0-9]+&?)?","");
-    set req.http.X-DMN-Debug = "Please DETECTED";
+  ## Basic preprocessing - No need to redo on restart
+  ## NOTE: this will remove ALL cookies EXCEPT wp-, wordpress_ and PHPSESSID
+  if (req.restarts == 0) {
+    call preprocess;
   }
-  else {
-    unset req.http.X-DMN-Debug;  
-    # Force debug for now
-    set req.http.X-DMN-Debug = "Please";
   
-  }
-  set req.url = regsub(req.url, "(\?&?)$", "");
- 
   set req.http.X-DMN-Debug-Callpath = "vcl_recv";  
   call set_req_debug;
+  
+  # Sanity Checks - No need to redo them on restarts
+  if (req.restarts == 0) {
+    call check_banned;
+    if (req.http.banned) { 
+      unset req.http.banned;
+      return(synth(404, "These are not the pages you are looking for."));
+    }
+    call sanity_check_url;
+    if ( req.http.insane == "Yes" ) {
+      unset req.http.insane;
+      return(synth(404, "I'm losing my mind!"));
+      #return(synth(404));
+    }
+  }
+  
 
   ## PURGE/BAN/REFRESH
   if (req.method == "PURGE") {
     if (!client.ip ~ purgers) { return(synth(405, "Purge Not allowed.")); }
-    return (purge);
+    if (!req.http.X-Purge ~ "Yes") { return(purge); }
   }
   
   ## TODO: We really should check the required headers are present!
@@ -155,44 +150,90 @@ sub vcl_recv {
       req.method != "TRACE" &&  req.method != "OPTIONS" &&
       req.method != "DELETE") {
         /* Non-RFC2616 or CONNECT which is weird. */
-        return (pipe);
+        return(pipe);
       }
-    
+
+  # Implementing websocket support
+  # Note: Check what configuration is required on the nginx side
+  # (https://www.varnish-cache.org/docs/4.0/users-guide/vcl-example-websockets.html)
+  #if (req.http.Upgrade ~ "(?i)websocket") {
+  #  return(pipe);
+  #}
+				
+
+
   if (req.method != "GET" && req.method != "HEAD") {
     /* We only deal with GET and HEAD by default */
     set req.backend_hint = www.backend();
     set req.http.X-DMN-Debug-Backend-Director = 
       "www (Skipping request type: " + req.method + ")" ;
-    return (pass);
+    return(pipe);
   }
 
 
   ## Get all the easy stuff out of the way...
   ## admin/login, static files, transaction dir, etc.
-  
-  # If they're hitting the admin/login page or some Authenticated page
-  # just pass and skip all the processing
-  if (req.url ~ "^/wp-(login|admin)" ||
-      req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
-      req.http.Authorization ) {
-    set req.http.X-DMN-Debug = "Pipe";
-    return (pipe);
-  }
-  
-  # Always pass (pipe) on anything in the transaction (e-commerce)
-  # folder. (Safety Feature)
+
+  ## Always pass (pipe) on anything in the transaction (e-commerce)
+  ## folder. (Safety Feature)
   if (req.url ~ "^/transaction" ) { 
-    set req.http.X-DMN-Debug = "Pipe";
-    return (pipe); 
+    set req.http.X-DMN-Debug = "Pipe (Transaction)";
+    return(pipe); 
   }
 
-  call sanity_check_url;
-  if ( req.http.X-FAILED-SANITY == "Yes" ) {
-    unset req.http.X-FAILED-SANITY;
-    #return(synth(777, "Oops"));
-    return(synth(404));
+  ## Do not cache AJAX requests.
+  if (req.http.X-Requested-With == "XMLHttpRequest") {
+    ## NOTE: 'pipe' seems to break the wp-admin ?
+    set req.backend_hint = www.backend();
+    set req.http.X-DMN-Debug-Backend-Director = 
+      "www (XMLHttpRequest)" ;
+    set req.http.X-DMN-Debug = "Pass (XMLHttpRequest)";
+    return(pass);
+    #return(pipe);
   }
+
+  # NOTE: social login is BROKEN - purge the PHPSESSID and
+  #       find a BETTER PLUGIN!
+  # social login needs the PHPSESSID
+  #if (req.url ~ "^/wp-content/plugins/wordpress-social-login/" ||
+  #    req.url ~ "^/wp-login") {
+  #  set req.http.X-Forwarded-Port = "80";
+  #  set req.http.X-FORWARDED-PORT = "80";
+  #  set req.backend_hint = www.backend();
+  #  set req.http.X-DMN-Debug-Backend-Director = 
+  #    "www (social login with forwarded port)" ;
+  #  set req.http.X-DMN-Debug = "PASS (social login with forwarded port)";
+  #  return(pass);
+  #}    
+  #else {
+  #  # Purge the PHPSESSID - Its not used
+  #  set req.http.Cookie = regsuball(req.http.Cookie, "PHPSESSID=[^;]+;?", "");
+  #  set req.http.X-DMN-Debug-Cookies-Cooked = req.http.Cookie;
+  #}
+  # Purge the PHPSESSID - Its not used
+  set req.http.Cookie = regsuball(req.http.Cookie, "PHPSESSID=[^;]+;?", "");
+  set req.http.X-DMN-Debug-Cookies-Cooked = req.http.Cookie;
+  if (req.url ~ "^/wp-login") {
+    set req.backend_hint = www.backend();
+    set req.http.X-DMN-Debug-Backend-Director = 
+      "www (login)" ;
+    set req.http.X-DMN-Debug = "PASS (login)";
+    return(pass);
+  }    
+
   
+  # If they're hitting the admin page or some Authenticated page
+  # just pass and skip all the processing
+  # NOTE: 'pipe' seems to break the wp-admin ?
+  if (req.url ~ "^/wp-admin" || req.http.Authorization ) {
+    set req.backend_hint = www.backend();
+    set req.http.X-DMN-Debug-Backend-Director = 
+      "www (admin request)" ;
+    set req.http.X-DMN-Debug = "Pass (admin/login/etc)";
+    return(pass);
+  }
+
+
   ## This is our cache primer - strip cookies, and miss
   if (req.http.User-Agent == "DMN Cache Primer" && req.http.X-DMN-Cache-Primer == "Yes") {
     unset req.http.Cookie;
@@ -205,14 +246,10 @@ sub vcl_recv {
 
 
   ## Simple static files
-  set req.http.X-DMN-Debug-Cookies-Unset = "No";
   
   # uploaded images, etc.
   if (req.url ~ "^/wp-content/uploads" || req.http.X-DMN-Use-Uploads ) {
-    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Uploads File";
-    set req.http.purgeCookies = "YES - Uploads File";
-    unset req.http.Cookie;
-    #call NormReqEncoding;
+    ##call NormReqEncoding;
     set req.url = regsub(req.url, "^/wp-content/uploads/", "/");
     
     # remove the cache tag at the end as images don't change
@@ -220,32 +257,28 @@ sub vcl_recv {
     set req.url = regsub(req.url, "\?[1234567890abcdef]+", "");
     set req.http.X-Debug-Url-Cooked  = req.url;
     
-    set req.http.X-DMN-Debug-Backend-Director = 
-       "uploads (strips cookies): " + req.url;
     set req.backend_hint = uploads.backend();
     set req.http.uploads = "1";
     #call CheckRestarts;
     set req.http.X-DMN-Use-Uploads = "Yes";  
     set req.http.X-DMN-Debug-Recv-Returned = "Hash";
-    set req.http.X-DMN-Debug-Backend-Director = "Uploads" ;
+    set req.http.X-DMN-Debug-Backend-Director = 
+       "uploads (strips cookies): " + req.url;
     return(hash);
   }
   else {
     # Must be using the www backend
+    set req.backend_hint = www.backend();
+    unset req.http.uploads;
     set req.http.X-DMN-Use-Uploads = "No";  
     set req.http.X-DMN-Debug-Backend-Director = "www (Default)" ;
-    set req.backend_hint = www.backend();
   }
   
   # Any other static files
   if (req.url ~ "\.(css|js|jpe?g|gif|png|ico|woff|ttf|zip|tgz|gz|rar|bz2|pdf|tar|txt|wav|bmp|rtf|flv|swf)(\?[A-Za-z0-9]+)?$" ||
       req.url ~ "\.(css|js)\?ver=.*$" ) {
-    set req.http.X-DMN-Debug-Cookies-Unset = "YES - Media File";
-    set req.http.purgeCookies = "YES - Media File";
-    unset req.http.Cookie;
-
-    #call NormReqEncoding; 
-    #call CheckRestarts;
+    ##call NormReqEncoding; 
+    ##call CheckRestarts;
     set req.http.X-DMN-Debug-Recv-Returned = "Hash";
     set req.http.X-DMN-Debug-Backend-Director = "www (non-uploads static file)" ;
     return(hash);
@@ -299,31 +332,6 @@ sub vcl_recv {
   ##       for anonymous users, the cookies only hold comment_* 
   ##       and preference settings.
   
-  ## For now, see if we can fudge it..
-  ## Strip Cookies
-  ## TODO: PHPSESSID is the social login plugin. 
-  ## It doesn't seem to require it unless your logging in (see above)
-  ## so nuke it
-  ## PHPSESSID=fni3n9n509tbf6k3v479jse0d4;
-  ##
-  ## Strip everything except wordpress cookies
-  if (req.http.Cookie) {
-    set req.http.Cookie = ";" + req.http.Cookie;
-    set req.http.Cookie = regsuball(req.http.Cookie, "; +", ";");
-    set req.http.Cookie = regsuball(req.http.Cookie, ";(wp[_-][^=]+|wordpress[_-][^=]+|comment[^=]+)=", "; \1=");
-    set req.http.Cookie = regsuball(req.http.Cookie, ";[^ ][^;]*", "");
-    set req.http.Cookie = regsuball(req.http.Cookie, "^[; ]+|[; ]+$", "");
-
-    # Ok - js is in for loading comment_author_name - get rid of these
-    set req.http.Cookie = regsuball(req.http.Cookie, "(^|;) *comment_author[^;]+;? *", "\1");
-    set req.http.X-DMN-Debug-Cooked-Cookies = req.http.Cookie;
-  }
-  
-  if ( req.http.Cookie ~ "^ *$" ) {
-    unset req.http.Cookie;
-  }
-  
-
   ## If we have commenter cookies leftover, we're screwed..
   if ( req.http.Cookie ~ "comment_author" ) {
     set req.http.X-DMN-Debug-Recv-Returned = "Pass! (Bad comment_author cookie!)";
@@ -349,7 +357,7 @@ sub vcl_backend_fetch {
   set bereq.http.X-DMN-Debug-Callpath =
     bereq.http.X-DMN-Debug-Callpath + ", vcl_backend_fetch";
   set bereq.http.X-Debug-Url-Cooked  = bereq.url;
-
+  return(fetch);
 }
 
 sub vcl_backend_response {
@@ -374,8 +382,8 @@ sub vcl_backend_response {
       bereq.http.X-DMN-Debug-Callpath + ", vcl_backend_response";
 
   if (bereq.http.purgeCookies ~ "YES") {
-    #set bereq.http.X-Debug-Force-Unset-Cookies = "YES";
     set beresp.http.X-Debug-Force-Unset-Cookies = "YES";
+    unset beresp.http.Set-Cookie;
     unset beresp.http.Cookie;
     #unset beresp.http.cookie;
   }
@@ -403,11 +411,34 @@ sub vcl_backend_response {
   # don't cache search results
   if ( bereq.url ~ "\?s=" ){
     set beresp.ttl = 0s;
-    return (deliver);
+    return(deliver);
+  }
+  
+  # For static content strip all backend cookies
+  if (bereq.url ~ "\.(css|gif|ico|js|jp(e?)g)|png|rtf|swf|txt") {
+    unset beresp.http.Cookie;
+    unset beresp.http.Expires;
+    set beresp.http.X-Matched-Static = "Yep!";
+    set beresp.ttl = 1w;
+    return(deliver);
+  }
+  
+  # Micro Cache Front Door
+  if ( bereq.url ~ "\/$" ) {
+    if ( beresp.http.cookie ) {
+      set beresp.http.X-Debug-Front-Door-Cookies = "1";
+    }
+    else {
+      set beresp.ttl = 45s;
+      set beresp.http.X-Debug-TTL = "45 seconds";
+      set beresp.http.Cache-Control = "max-age=20,public";
+      set beresp.http.Expires = now + 20s;
+      return(deliver);
+    }  
   }
   
 
-  return (deliver);
+  return(deliver);
 
   # Setup for cacheable first
   #unset beresp.http.Cache-Control;
@@ -422,27 +453,6 @@ sub vcl_backend_response {
   set beresp.grace = 30s;
   
 
-  # For static content strip all backend cookies
-  if (bereq.url ~ "\.(css|js|png|gif|jp(e?)g)|swf|ico") {
-    #unset beresp.http.cookie;
-    #set beresp.ttl = 1w;
-    return (deliver);
-  }
-  
-  # Micro Cache Front Door
-  if ( bereq.url ~ "\/$" ) {
-    if ( beresp.http.cookie ) {
-      set beresp.http.X-Debug-Front-Door-Cookies = "1";
-    }
-    else {
-      set beresp.ttl = 45s;
-      set beresp.http.X-Debug-TTL = "45 seconds";
-      set beresp.http.Cache-Control = "max-age=20,public";
-      set beresp.http.Expires = now + 20s;
-      return (deliver);
-    }  
-  }
-  
   # Micro Cache Stories
   if ( bereq.url ~ "\/permalink" ) {
     if ( beresp.http.cookie ) {
@@ -453,7 +463,7 @@ sub vcl_backend_response {
       set beresp.http.X-Debug-TTL = "60 seconds";
       set beresp.http.Cache-Control = "max-age=30,public";
       set beresp.http.Expires = now + 30s;
-      return (deliver);
+      return(deliver);
     }  
   }
   
@@ -484,10 +494,10 @@ sub vcl_backend_response {
   # only cache status ok
   if ( beresp.status != 200 ) {
     set beresp.ttl = 30s;
-    return (deliver);
+    return(deliver);
   }
 								
-  return (deliver);
+  return(deliver);
 }
 
 
@@ -497,7 +507,7 @@ sub vcl_deliver {
       resp.http.X-DMN-Debug-Callpath + ", vcl_deliver";
 
   call set_resp_debug;
-
+  
   if (obj.hits == 0) {
     set resp.http.X-Debug-Cache = "MISS";
   } else {
@@ -629,9 +639,7 @@ sub vcl_pipe {
   # set bereq.http.connection = "close";
   # here.  It is not set by default as it might break some broken web
   # applications, like IIS with NTLM authentication.
-
-  set req.http.X-DMN-Debug-Callpath =
-      req.http.X-DMN-Debug-Callpath + ", vcl_pipe";
+  #set bereq.http.Connection = "close";
 
   set req.http.X-DMN-Debug-Callpath =
     req.http.X-DMN-Debug-Callpath + ", vcl_pipe";
@@ -639,11 +647,21 @@ sub vcl_pipe {
   
   set req.http.X-Debug-Url-Cooked  = req.url;
   set bereq.http.X-Debug-Url-Cooked  = req.http.X-Debug-Url-Cooked;
-  
-  set bereq.http.connection = "close";
-  set req.http.connection = "close";
+
+  # Implementing websocket support 
+  # (https://www.varnish-cache.org/docs/4.0/users-guide/vcl-example-websockets.html)
+  #if (req.http.upgrade) {
+  #  set bereq.http.upgrade = req.http.upgrade;
+  #}
     
-  return (pipe);
+  return(pipe);
+}
+
+
+sub vcl_purge {
+  # restart request
+  set req.http.X-Purge = "Yes";
+  return(restart);
 }
 
 
