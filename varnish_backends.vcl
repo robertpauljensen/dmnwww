@@ -1,8 +1,12 @@
 
+#  .url = "/robots.txt"; 
+# Checks php-fpm backend
+#  .url = "/ping"; 
+# does NOT check php-fpm backend health!
+
 probe robot {
   .url = "/robots.txt"; # Checks php-fpm backend
   .interval = 5s;
-  # .url = "/ping"; # does NOT check php-fpm backend health!
   # .interval = 1s;
   #.timeout = 0.9s;
   .timeout = 2s;
