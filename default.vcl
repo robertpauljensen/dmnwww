@@ -1,1 +1,1 @@
-debug.vcl
+varnish4.vcl

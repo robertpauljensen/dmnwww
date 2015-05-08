@@ -73,9 +73,16 @@ backend fail {
 }
 
 
-director www round-robin {
-  { .backend = www1; }
-  { .backend = www2; }
+# director www round-robin {
+director www random {
+  { 
+    .backend = www1;
+    .weight = 5;
+  }
+  { 
+    .backend = www2;
+    .weight = 5;
+  }
 }
 
 
