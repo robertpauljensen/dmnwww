@@ -132,6 +132,18 @@ backend upload5 {
   .max_connections = 512;
 }
 
+
+backend vanilla1 {
+  .host = "10.30.1.110";
+  .port = "10082";
+  .probe = robot;
+  .connect_timeout = 20s;
+  .first_byte_timeout = 20s;
+  .between_bytes_timeout = 20s;
+  .max_connections = 512;
+}
+
+
 #backend fail {
 #  .host = "localhost";
 #  .port = "21121";
@@ -161,6 +173,8 @@ sub vcl_init {
   uploads.add_backend(upload3);
   uploads.add_backend(upload4);
   uploads.add_backend(upload5);
+  new vanilla = directors.round_robin();
+  vanilla.add_backend(vanilla1);
   return(ok);
 }
 
