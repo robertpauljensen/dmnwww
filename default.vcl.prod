@@ -5,13 +5,13 @@
 # server.
 #
 backend static {
-  .host = "72.52.81.235";
+  .host = "xxxx";
   .port = "8080";
   .max_connections = 8;
 }
 
 backend default {
-    .host = "72.52.81.251";
+    .host = "xxxx";
     .port = "11008";
     .probe = {
       .url = "/robots.txt";
